@@ -2,6 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-
+<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+<string>Skedoggle uses your location to track your dog walks, even when the app is in the background.</string>
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>Skedoggle uses your location to track your dog walks.</string>
+<key>UIBackgroundModes</key>
+<array>
+    <string>location</string>
+</array>
 </dict>
 </plist>
