@@ -8,6 +8,7 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.module.annotations.ReactModule;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.app.Activity;
 import android.app.Application;
@@ -33,7 +34,9 @@ public class BuddybossCustomCodeModule extends ReactContextBaseJavaModule {
     public static void onLocationUpdate(double lat, double lng, long timestamp) {
         if (reactAppContext == null) return;
         try {
-            String json = "{\"type\":\"location\",\"lat\":" + lat + ",\"lng\":" + lng + ",\"ts\":" + timestamp + "}";
+            String json = "{\"type\":\"location\",\"lat\":" + lat +
+                          ",\"lng\":" + lng +
+                          ",\"ts\":" + timestamp + "}";
             reactAppContext
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                 .emit("SkedoggleLocation", json);
@@ -49,7 +52,11 @@ public class BuddybossCustomCodeModule extends ReactContextBaseJavaModule {
             if (activity == null) { promise.reject("NO_ACTIVITY", "No activity"); return; }
             Intent intent = new Intent(activity, LocationForegroundService.class);
             intent.setAction(LocationForegroundService.ACTION_START);
-            activity.startService(intent);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                activity.startForegroundService(intent);
+            } else {
+                activity.startService(intent);
+            }
             promise.resolve(true);
         } catch (Exception e) {
             promise.reject("ERROR", e.getMessage());
