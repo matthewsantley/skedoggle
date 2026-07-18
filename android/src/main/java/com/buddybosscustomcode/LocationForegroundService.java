@@ -4,45 +4,30 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
-import android.os.Looper;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import com.google.android.gms.location.FusedLocationProviderClient;
-import com.google.android.gms.location.LocationCallback;
-import com.google.android.gms.location.LocationRequest;
-import com.google.android.gms.location.LocationResult;
-import com.google.android.gms.location.LocationServices;
-import com.google.android.gms.location.Priority;
 
-public class LocationForegroundService extends Service {
+public class LocationForegroundService extends Service implements LocationListener {
 
     public static final String ACTION_START = "ACTION_START";
     public static final String ACTION_STOP  = "ACTION_STOP";
     private static final String CHANNEL_ID  = "sk_walk_tracker";
     private static final int    NOTIF_ID    = 1001;
 
-    private FusedLocationProviderClient fusedClient;
-    private LocationCallback locationCallback;
+    private LocationManager locationManager;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        fusedClient = LocationServices.getFusedLocationProviderClient(this);
-
-        locationCallback = new LocationCallback() {
-            @Override
-            public void onLocationResult(LocationResult result) {
-                Location loc = result.getLastLocation();
-                if (loc != null) {
-                    // Send to BuddybossCustomCodeModule for forwarding to WebView
-                    BuddybossCustomCodeModule.onLocationUpdate(loc.getLatitude(), loc.getLongitude(), loc.getTime());
-                }
-            }
-        };
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
     }
 
     @Override
@@ -66,24 +51,57 @@ public class LocationForegroundService extends Service {
     }
 
     private void startLocationUpdates() {
-        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
-            .setMinUpdateIntervalMillis(3000)
-            .build();
         try {
-            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper());
+            // Try GPS provider first, fall back to network
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    3000,   // min time ms
+                    5,      // min distance metres
+                    this
+                );
+            }
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    3000,
+                    5,
+                    this
+                );
+            }
         } catch (SecurityException e) {
             e.printStackTrace();
         }
     }
 
     private void stopLocationUpdates() {
-        fusedClient.removeLocationUpdates(locationCallback);
+        try {
+            locationManager.removeUpdates(this);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
+
+    // LocationListener callbacks
+    @Override
+    public void onLocationChanged(Location loc) {
+        BuddybossCustomCodeModule.onLocationUpdate(
+            loc.getLatitude(),
+            loc.getLongitude(),
+            loc.getTime()
+        );
+    }
+
+    @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+    @Override public void onProviderEnabled(String provider) {}
+    @Override public void onProviderDisabled(String provider) {}
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "Walk Tracker", NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID,
+                "Walk Tracker",
+                NotificationManager.IMPORTANCE_LOW
             );
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
