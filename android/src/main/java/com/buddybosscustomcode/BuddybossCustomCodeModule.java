@@ -31,12 +31,11 @@ public class BuddybossCustomCodeModule extends ReactContextBaseJavaModule {
     public String getName() { return NAME; }
 
     // Called by LocationForegroundService when a new location arrives
-    public static void onLocationUpdate(double lat, double lng, long timestamp) {
-        if (reactAppContext == null) return;
-        try {
-            String json = "{\"type\":\"location\",\"lat\":" + lat +
-                          ",\"lng\":" + lng +
-                          ",\"ts\":" + timestamp + "}";
+    public static void onLocationUpdate(double lat, double lng, long timestamp, float accuracy) {
+           String json = "{\"type\":\"location\",\"lat\":" + lat +
+                         ",\"lng\":" + lng +
+                         ",\"ts\":" + timestamp +
+                         ",\"accuracy\":" + accuracy + "}";
             reactAppContext
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                 .emit("SkedoggleLocation", json);
