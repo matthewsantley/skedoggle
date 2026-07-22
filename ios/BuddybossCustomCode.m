@@ -86,7 +86,8 @@ RCT_REMAP_METHOD(stopBackgroundTracking,
         @"type": @"location",
         @"lat":  @(loc.coordinate.latitude),
         @"lng":  @(loc.coordinate.longitude),
-        @"ts":   @(ts)
+        @"ts":   @(ts),
+        @"accuracy": @(loc.horizontalAccuracy)  // ADD THIS
     };
 
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
