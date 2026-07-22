@@ -88,7 +88,8 @@ public class LocationForegroundService extends Service implements LocationListen
         BuddybossCustomCodeModule.onLocationUpdate(
             loc.getLatitude(),
             loc.getLongitude(),
-            loc.getTime()
+            loc.getTime(),
+            loc.getAccuracy()  // ADD THIS
         );
     }
 
