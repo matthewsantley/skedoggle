@@ -25,7 +25,6 @@ public class LocationForegroundService extends Service implements LocationListen
     private LocationManager locationManager;
     private Location lastGoodLocation;
 
-    // Tuning
     private static final long  MIN_TIME_MS     = 3000;
     private static final float MIN_DISTANCE_M  = 5f;
     private static final float MAX_ACCURACY_M  = 40f;
@@ -39,7 +38,6 @@ public class LocationForegroundService extends Service implements LocationListen
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Important: handle sticky restart (intent can be null)
         if (intent == null || ACTION_START.equals(intent.getAction())) {
             startForegroundWithNotification();
             startLocationUpdates();
@@ -65,7 +63,6 @@ public class LocationForegroundService extends Service implements LocationListen
 
     private void startLocationUpdates() {
         try {
-            // Prefer GPS only – this alone removes most spikes
             if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
@@ -74,7 +71,6 @@ public class LocationForegroundService extends Service implements LocationListen
                         this
                 );
             } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                // Fallback only if GPS is completely off
                 locationManager.requestLocationUpdates(
                         LocationManager.NETWORK_PROVIDER,
                         MIN_TIME_MS,
@@ -100,11 +96,8 @@ public class LocationForegroundService extends Service implements LocationListen
     @Override
     public void onLocationChanged(Location loc) {
         if (loc == null || !loc.hasAccuracy()) return;
-
-        // 1. Reject poor accuracy
         if (loc.getAccuracy() > MAX_ACCURACY_M) return;
 
-        // 2. Reject sudden unrealistic jumps
         if (lastGoodLocation != null) {
             float distance = lastGoodLocation.distanceTo(loc);
             long timeDiff = loc.getTime() - lastGoodLocation.getTime();
@@ -115,7 +108,6 @@ public class LocationForegroundService extends Service implements LocationListen
 
         lastGoodLocation = loc;
 
-        // Send to React Native
         BuddybossCustomCodeModule.onLocationUpdate(
                 loc.getLatitude(),
                 loc.getLongitude(),
