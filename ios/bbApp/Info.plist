@@ -4,6 +4,8 @@
 <dict>
 <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 <string>Skedoggle uses your location to track your dog walks, even when the app is in the background.</string>
+<key>NSLocationAlwaysUsageDescription</key>
+<string>Skedoggle uses your location to track your dog walks, even when the app is in the background.</string>
 <key>NSLocationWhenInUseUsageDescription</key>
 <string>Skedoggle uses your location to track your dog walks.</string>
 <key>UIBackgroundModes</key>
