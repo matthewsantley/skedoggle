@@ -4,51 +4,42 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
-import android.os.Looper;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import com.google.android.gms.location.*;
 
-public class LocationForegroundService extends Service {
+public class LocationForegroundService extends Service implements LocationListener {
 
     public static final String ACTION_START = "ACTION_START";
     public static final String ACTION_STOP  = "ACTION_STOP";
     private static final String CHANNEL_ID  = "sk_walk_tracker";
     private static final int    NOTIF_ID    = 1001;
 
-    private FusedLocationProviderClient fusedClient;
-    private LocationCallback locationCallback;
+    private LocationManager locationManager;
     private Location lastGoodLocation;
 
     // Tuning
-    private static final long   INTERVAL_MS     = 3000;
-    private static final float  MIN_DISTANCE_M  = 5f;
-    private static final float  MAX_ACCURACY_M  = 40f;
-    private static final float  MAX_JUMP_M      = 80f;
+    private static final long  MIN_TIME_MS     = 3000;
+    private static final float MIN_DISTANCE_M  = 5f;
+    private static final float MAX_ACCURACY_M  = 40f;
+    private static final float MAX_JUMP_M      = 80f;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        fusedClient = LocationServices.getFusedLocationProviderClient(this);
-
-        locationCallback = new LocationCallback() {
-            @Override
-            public void onLocationResult(LocationResult result) {
-                if (result == null) return;
-                for (Location loc : result.getLocations()) {
-                    processLocation(loc);
-                }
-            }
-        };
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Handle sticky restart (intent == null)
+        // Important: handle sticky restart (intent can be null)
         if (intent == null || ACTION_START.equals(intent.getAction())) {
             startForegroundWithNotification();
             startLocationUpdates();
@@ -74,40 +65,50 @@ public class LocationForegroundService extends Service {
 
     private void startLocationUpdates() {
         try {
-            LocationRequest request = new LocationRequest.Builder(
-                    Priority.PRIORITY_HIGH_ACCURACY, INTERVAL_MS)
-                    .setMinUpdateIntervalMillis(INTERVAL_MS)
-                    .setMinUpdateDistanceMeters(MIN_DISTANCE_M)
-                    .setWaitForAccurateLocation(true)
-                    .build();
-
-            fusedClient.requestLocationUpdates(
-                    request,
-                    locationCallback,
-                    Looper.getMainLooper()
-            );
+            // Prefer GPS only – this alone removes most spikes
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        MIN_TIME_MS,
+                        MIN_DISTANCE_M,
+                        this
+                );
+            } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                // Fallback only if GPS is completely off
+                locationManager.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        MIN_TIME_MS,
+                        MIN_DISTANCE_M,
+                        this
+                );
+            }
         } catch (SecurityException e) {
             e.printStackTrace();
         }
     }
 
     private void stopLocationUpdates() {
-        if (fusedClient != null && locationCallback != null) {
-            fusedClient.removeLocationUpdates(locationCallback);
+        try {
+            if (locationManager != null) {
+                locationManager.removeUpdates(this);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
-    private void processLocation(Location loc) {
+    @Override
+    public void onLocationChanged(Location loc) {
         if (loc == null || !loc.hasAccuracy()) return;
 
-        // Accuracy filter
+        // 1. Reject poor accuracy
         if (loc.getAccuracy() > MAX_ACCURACY_M) return;
 
-        // Jump filter (stops spikes)
+        // 2. Reject sudden unrealistic jumps
         if (lastGoodLocation != null) {
             float distance = lastGoodLocation.distanceTo(loc);
-            long timeDiffMs = loc.getTime() - lastGoodLocation.getTime();
-            if (distance > MAX_JUMP_M && timeDiffMs < 15_000) {
+            long timeDiff = loc.getTime() - lastGoodLocation.getTime();
+            if (distance > MAX_JUMP_M && timeDiff < 15000) {
                 return;
             }
         }
@@ -122,6 +123,10 @@ public class LocationForegroundService extends Service {
                 loc.getAccuracy()
         );
     }
+
+    @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+    @Override public void onProviderEnabled(String provider) {}
+    @Override public void onProviderDisabled(String provider) {}
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
