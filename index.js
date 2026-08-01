@@ -57,17 +57,17 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         }
     });
 
-    const addMessageHandler =
-        externalCodeSetup.webviewHooksApi?.addMessageHandler;
+   const webviewHooksApi =
+    externalCodeSetup.webviewHooksApi;
 
-    if (!addMessageHandler) {
-        console.error(
-            'SKEDOGGLE_RN_MESSAGE_HANDLER_UNAVAILABLE'
-        );
-        return;
-    }
+if (!webviewHooksApi) {
+    console.error(
+        'SKEDOGGLE_RN_WEBVIEW_HOOKS_UNAVAILABLE'
+    );
+    return;
+}
 
-    addMessageHandler((message) => {
+const messageHandler = (message) => {
         console.log(
             'SKEDOGGLE_RN_WEBVIEW_MESSAGE_RECEIVED',
             message
