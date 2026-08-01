@@ -1,95 +1,151 @@
 package com.buddybosscustomcode;
 
-import androidx.annotation.NonNull;
-import com.facebook.react.bridge.Promise;
-import com.facebook.react.bridge.ReactApplicationContext;
-import com.facebook.react.bridge.ReactContextBaseJavaModule;
-import com.facebook.react.bridge.ReactMethod;
-import com.facebook.react.module.annotations.ReactModule;
-import com.facebook.react.modules.core.DeviceEventManagerModule;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
 import android.content.Intent;
+import android.location.Location;
 import android.os.Build;
-import android.os.Bundle;
-import android.app.Activity;
-import android.app.Application;
-import com.facebook.react.ReactPackage;
-import java.util.List;
+import android.os.IBinder;
+import android.os.Looper;
+import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
+import com.google.android.gms.location.*;
 
-@ReactModule(name = BuddybossCustomCodeModule.NAME)
-public class BuddybossCustomCodeModule extends ReactContextBaseJavaModule {
+public class LocationForegroundService extends Service {
 
-    public static final String NAME = "BuddybossCustomCode";
-    private static ReactApplicationContext reactAppContext;
+    public static final String ACTION_START = "ACTION_START";
+    public static final String ACTION_STOP  = "ACTION_STOP";
+    private static final String CHANNEL_ID  = "sk_walk_tracker";
+    private static final int    NOTIF_ID    = 1001;
 
-    public BuddybossCustomCodeModule(ReactApplicationContext reactContext) {
-        super(reactContext);
-        reactAppContext = reactContext;
+    private FusedLocationProviderClient fusedClient;
+    private LocationCallback locationCallback;
+    private Location lastGoodLocation;
+
+    // Tuning – change these to taste
+    private static final long   INTERVAL_MS       = 3000;
+    private static final float  MIN_DISTANCE_M    = 5f;
+    private static final float  MAX_ACCURACY_M    = 40f;   // reject worse than this
+    private static final float  MAX_JUMP_M        = 80f;   // reject sudden jumps
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        fusedClient = LocationServices.getFusedLocationProviderClient(this);
+
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult result) {
+                if (result == null) return;
+                for (Location loc : result.getLocations()) {
+                    processLocation(loc);
+                }
+            }
+        };
     }
 
     @Override
-    @NonNull
-    public String getName() { return NAME; }
-
-    // Called by LocationForegroundService when a new location arrives
-    public static void onLocationUpdate(double lat, double lng, long timestamp, float accuracy) {
-    try {
-        if (reactAppContext == null) {
-            return; // or log a warning
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        // Always re-create notification + start tracking on sticky restart
+        if (intent == null || ACTION_START.equals(intent.getAction())) {
+            startForegroundWithNotification();
+            startLocationUpdates();
+        } else if (ACTION_STOP.equals(intent.getAction())) {
+            stopLocationUpdates();
+            stopForeground(true);
+            stopSelf();
         }
-        String json = "{\"type\":\"location\",\"lat\":" + lat +
-                         ",\"lng\":" + lng +
-                         ",\"ts\":" + timestamp +
-                         ",\"accuracy\":" + accuracy + "}";
-            reactAppContext
-                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                .emit("SkedoggleLocation", json);
-        } catch (Exception e) {
+        return START_STICKY;
+    }
+
+    private void startForegroundWithNotification() {
+        createNotificationChannel();
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Skedoggle Walk Tracker")
+                .setContentText("Tracking your walk…")
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build();
+        startForeground(NOTIF_ID, notification);
+    }
+
+    private void startLocationUpdates() {
+        try {
+            LocationRequest request = new LocationRequest.Builder(
+                    Priority.PRIORITY_HIGH_ACCURACY, INTERVAL_MS)
+                    .setMinUpdateIntervalMillis(INTERVAL_MS)
+                    .setMinUpdateDistanceMeters(MIN_DISTANCE_M)
+                    .setWaitForAccurateLocation(true)
+                    .build();
+
+            fusedClient.requestLocationUpdates(
+                    request,
+                    locationCallback,
+                    Looper.getMainLooper()
+            );
+        } catch (SecurityException e) {
             e.printStackTrace();
         }
     }
 
-    @ReactMethod
-    public void startBackgroundTracking(Promise promise) {
-        try {
-            Activity activity = getCurrentActivity();
-            if (activity == null) { promise.reject("NO_ACTIVITY", "No activity"); return; }
-            Intent intent = new Intent(activity, LocationForegroundService.class);
-            intent.setAction(LocationForegroundService.ACTION_START);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                activity.startForegroundService(intent);
-            } else {
-                activity.startService(intent);
+    private void stopLocationUpdates() {
+        if (fusedClient != null && locationCallback != null) {
+            fusedClient.removeLocationUpdates(locationCallback);
+        }
+    }
+
+    private void processLocation(Location loc) {
+        if (loc == null || !loc.hasAccuracy()) return;
+
+        // 1. Accuracy filter
+        if (loc.getAccuracy() > MAX_ACCURACY_M) return;
+
+        // 2. Jump filter (prevents spikes)
+        if (lastGoodLocation != null) {
+            float distance = lastGoodLocation.distanceTo(loc);
+            long timeDiffMs = loc.getTime() - lastGoodLocation.getTime();
+            // unrealistic speed (> ~100 km/h) or pure jump
+            if (distance > MAX_JUMP_M && timeDiffMs < 15_000) {
+                return; // ignore this point
             }
-            promise.resolve(true);
-        } catch (Exception e) {
-            promise.reject("ERROR", e.getMessage());
+        }
+
+        lastGoodLocation = loc;
+
+        // Send to React Native
+        BuddybossCustomCodeModule.onLocationUpdate(
+                loc.getLatitude(),
+                loc.getLongitude(),
+                loc.getTime(),
+                loc.getAccuracy()
+        );
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Walk Tracker",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setShowBadge(false);
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
-    @ReactMethod
-    public void stopBackgroundTracking(Promise promise) {
-        try {
-            Activity activity = getCurrentActivity();
-            if (activity == null) { promise.reject("NO_ACTIVITY", "No activity"); return; }
-            Intent intent = new Intent(activity, LocationForegroundService.class);
-            intent.setAction(LocationForegroundService.ACTION_STOP);
-            activity.startService(intent);
-            promise.resolve(true);
-        } catch (Exception e) {
-            promise.reject("ERROR", e.getMessage());
-        }
+    @Override
+    public void onDestroy() {
+        stopLocationUpdates();
+        super.onDestroy();
     }
 
-    // Lifecycle methods (DO NOT DELETE)
-    public static void onCreateApplication(Application application) {}
-    public static void onCreateActivity(Activity activity, Bundle savedInstanceState) {}
-    public static void onStart(Activity activity) {}
-    public static void onNewIntent(Activity activity, Intent intent) {}
-    public static void getPackages(List<ReactPackage> packages) {}
-
-    @ReactMethod
-    public void multiply(int a, int b, Promise promise) {
-        promise.resolve(a * b);
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
     }
-    public static native int nativeMultiply(int a, int b);
 }
