@@ -60,6 +60,4 @@ dependencies {
     //noinspection GradleDynamicVersion
     implementation "com.facebook.react:react-native:+"
 
-    // Required for the improved location service (FusedLocationProvider)
-    implementation "com.google.android.gms:play-services-location:21.3.0"
 }
