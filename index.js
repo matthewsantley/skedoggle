@@ -23,7 +23,6 @@ export const applyCustomCode = (externalCodeSetup: any) => {
 
     const emitter = new NativeEventEmitter(BuddybossCustomCode);
 
-    // Forward native location events into the WebView.
     emitter.addListener('SkedoggleLocation', (locationData) => {
         console.log(
             'SKEDOGGLE_RN_NATIVE_LOCATION_RECEIVED',
@@ -41,10 +40,6 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         }
 
         try {
-            /*
-             Send a JSON string so the WebView receives a consistent
-             message format.
-            */
             sendMessage(
                 typeof locationData === 'string'
                     ? locationData
@@ -72,7 +67,6 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         return;
     }
 
-    // Handle messages coming from the WebView.
     addMessageHandler((message) => {
         console.log(
             'SKEDOGGLE_RN_WEBVIEW_MESSAGE_RECEIVED',
@@ -80,10 +74,15 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         );
 
         try {
+            const rawMessage =
+                message?.nativeEvent?.data ??
+                message?.data ??
+                message;
+
             const msg =
-                typeof message === 'string'
-                    ? JSON.parse(message)
-                    : message;
+                typeof rawMessage === 'string'
+                    ? JSON.parse(rawMessage)
+                    : rawMessage;
 
             if (!msg || typeof msg !== 'object') {
                 console.error(
