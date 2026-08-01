@@ -48,12 +48,10 @@ RCT_EXPORT_MODULE()
     didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
     withBridge:(RCTBridge *)bridge
 {
-    /*
-     Required by the BuddyBoss custom-code structure.
-
-     No additional setup is needed here because CLLocationManager is
-     created when the native module is initialised.
-    */
+    os_log(
+        OS_LOG_DEFAULT,
+        "SKEDOGGLE_NATIVE_CUSTOM_CODE_LOADED"
+    );
 }
 
 + (void)rootViewVisible:(RCTRootView *)rootView
