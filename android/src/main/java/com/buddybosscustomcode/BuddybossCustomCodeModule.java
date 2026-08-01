@@ -32,7 +32,11 @@ public class BuddybossCustomCodeModule extends ReactContextBaseJavaModule {
 
     // Called by LocationForegroundService when a new location arrives
     public static void onLocationUpdate(double lat, double lng, long timestamp, float accuracy) {
-           String json = "{\"type\":\"location\",\"lat\":" + lat +
+    try {
+        if (reactAppContext == null) {
+            return; // or log a warning
+        }
+        String json = "{\"type\":\"location\",\"lat\":" + lat +
                          ",\"lng\":" + lng +
                          ",\"ts\":" + timestamp +
                          ",\"accuracy\":" + accuracy + "}";
