@@ -1,3 +1,4 @@
+#import <os/log.h>
 #import "BuddybossCustomCode.h"
 
 #import <React/RCTLog.h>
@@ -81,6 +82,10 @@ RCT_EXPORT_MODULE()
 
 - (void)setupLocationManager
 {
+os_log(
+    OS_LOG_DEFAULT,
+    "SKEDOGGLE_NATIVE_LOCATION_MANAGER_CREATED"
+);
     /*
      CLLocationManager should be created on the main thread.
     */
@@ -142,6 +147,10 @@ RCT_REMAP_METHOD(startBackgroundTracking,
                  startWithResolver:(RCTPromiseResolveBlock)resolve
                  withRejecter:(RCTPromiseRejectBlock)reject)
 {
+os_log(
+    OS_LOG_DEFAULT,
+    "SKEDOGGLE_NATIVE_START_BACKGROUND_TRACKING_CALLED"
+);
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!self->_locationManager) {
             [self setupLocationManager];
