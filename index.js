@@ -18,87 +18,128 @@ export const applyCustomCode = (externalCodeSetup: any) => {
             'SKEDOGGLE_RN_NATIVE_MODULE_MISSING',
             Object.keys(NativeModules)
         );
+
         return;
     }
 
-    const emitter = new NativeEventEmitter(BuddybossCustomCode);
+    /*
+     Listen for locations produced by the native iOS
+     CLLocationManager module.
+    */
+    const emitter = new NativeEventEmitter(
+        BuddybossCustomCode
+    );
 
-    emitter.addListener('SkedoggleLocation', (locationData) => {
-        console.log(
-            'SKEDOGGLE_RN_NATIVE_LOCATION_RECEIVED',
-            locationData
+    emitter.addListener(
+        'SkedoggleLocation',
+        (locationData) => {
+            console.log(
+                'SKEDOGGLE_RN_NATIVE_LOCATION_RECEIVED',
+                locationData
+            );
+
+            const sendMessageToWebView =
+                externalCodeSetup
+                    .webviewHooksApi
+                    ?.sendMessageToWebView;
+
+            if (
+                typeof sendMessageToWebView !== 'function'
+            ) {
+                console.error(
+                    'SKEDOGGLE_RN_SEND_TO_WEBVIEW_UNAVAILABLE'
+                );
+
+                return;
+            }
+
+            try {
+                const message =
+                    typeof locationData === 'string'
+                        ? locationData
+                        : JSON.stringify(locationData);
+
+                sendMessageToWebView(message);
+
+                console.log(
+                    'SKEDOGGLE_RN_LOCATION_FORWARDED_TO_WEBVIEW'
+                );
+            } catch (error) {
+                console.error(
+                    'SKEDOGGLE_RN_LOCATION_FORWARD_FAILED',
+                    error
+                );
+            }
+        }
+    );
+
+    /*
+     Obtain BuddyBoss's WebView hooks.
+    */
+    const webviewHooksApi =
+        externalCodeSetup.webviewHooksApi;
+
+    if (!webviewHooksApi) {
+        console.error(
+            'SKEDOGGLE_RN_WEBVIEW_HOOKS_UNAVAILABLE'
         );
 
-        const sendMessage =
-            externalCodeSetup.webviewHooksApi?.sendMessageToWebView;
+        return;
+    }
 
-        if (!sendMessage) {
-            console.error(
-                'SKEDOGGLE_RN_SEND_TO_WEBVIEW_UNAVAILABLE'
-            );
-            return;
-        }
+    /*
+     This function handles messages sent by the website using:
 
-        try {
-            sendMessage(
-                typeof locationData === 'string'
-                    ? locationData
-                    : JSON.stringify(locationData)
-            );
-
-            console.log(
-                'SKEDOGGLE_RN_LOCATION_FORWARDED_TO_WEBVIEW'
-            );
-        } catch (error) {
-            console.error(
-                'SKEDOGGLE_RN_LOCATION_FORWARD_FAILED',
-                error
-            );
-        }
-    });
-
-   const webviewHooksApi =
-    externalCodeSetup.webviewHooksApi;
-
-if (!webviewHooksApi) {
-    console.error(
-        'SKEDOGGLE_RN_WEBVIEW_HOOKS_UNAVAILABLE'
-    );
-    return;
-}
-
-const messageHandler = (message) => {
+     window.ReactNativeWebView.postMessage(...)
+    */
+    const messageHandler = (message) => {
         console.log(
             'SKEDOGGLE_RN_WEBVIEW_MESSAGE_RECEIVED',
             message
         );
 
         try {
+            /*
+             BuddyBoss may provide:
+
+             1. A plain JSON string
+             2. An object
+             3. A React Native event containing nativeEvent.data
+             4. An object containing data
+            */
             const rawMessage =
                 message?.nativeEvent?.data ??
                 message?.data ??
                 message;
 
-            const msg =
+            const parsedMessage =
                 typeof rawMessage === 'string'
                     ? JSON.parse(rawMessage)
                     : rawMessage;
 
-            if (!msg || typeof msg !== 'object') {
+            if (
+                !parsedMessage ||
+                typeof parsedMessage !== 'object'
+            ) {
                 console.error(
                     'SKEDOGGLE_RN_INVALID_WEBVIEW_MESSAGE',
                     message
                 );
+
                 return;
             }
 
-            if (msg.action === 'startTracking') {
+            if (
+                parsedMessage.action ===
+                'startTracking'
+            ) {
                 console.log(
                     'SKEDOGGLE_RN_START_TRACKING_RECEIVED'
                 );
 
                 Promise.resolve(
-                    BuddybossCustomCode.startBackgroundTracking()
+                    BuddybossCustomCode
+                        .startBackgroundTracking()
                 )
                     .then((result) => {
                         console.log(
@@ -116,13 +157,17 @@ const messageHandler = (message) => {
                 return;
             }
 
-            if (msg.action === 'stopTracking') {
+            if (
+                parsedMessage.action ===
+                'stopTracking'
+            ) {
                 console.log(
                     'SKEDOGGLE_RN_STOP_TRACKING_RECEIVED'
                 );
 
                 Promise.resolve(
-                    BuddybossCustomCode.stopBackgroundTracking()
+                    BuddybossCustomCode
+                        .stopBackgroundTracking()
                 )
                     .then((result) => {
                         console.log(
@@ -142,7 +187,7 @@ const messageHandler = (message) => {
 
             console.log(
                 'SKEDOGGLE_RN_UNHANDLED_WEBVIEW_ACTION',
-                msg.action
+                parsedMessage.action
             );
         } catch (error) {
             console.error(
@@ -151,9 +196,28 @@ const messageHandler = (message) => {
                 message
             );
         }
-    });
+    };
 
-    console.log(
-        'SKEDOGGLE_RN_MESSAGE_HANDLER_REGISTERED'
+    /*
+     Register the handler using the BuddyBoss API already
+     present in your original file.
+    */
+    if (
+        typeof webviewHooksApi.addMessageHandler ===
+        'function'
+    ) {
+        webviewHooksApi.addMessageHandler(
+            messageHandler
+        );
+
+        console.log(
+            'SKEDOGGLE_RN_MESSAGE_HANDLER_REGISTERED'
+        );
+
+        return;
+    }
+
+    console.error(
+        'SKEDOGGLE_RN_ADD_MESSAGE_HANDLER_UNAVAILABLE'
     );
 };
