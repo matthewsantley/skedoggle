@@ -10,11 +10,6 @@ static NSString *const SkedoggleBufferedLocationsKey =
 
 @implementation BuddybossCustomCode
 {
-
-RCT_EXPORT_METHOD(logDiagnostic:(NSString *)message)
-{
-    NSLog(@"SKEDOGGLE_DIAG %@", message);
-}
     CLLocationManager *_locationManager;
 
     BOOL _isTracking;
@@ -34,6 +29,13 @@ RCT_EXPORT_METHOD(logDiagnostic:(NSString *)message)
 }
 
 RCT_EXPORT_MODULE()
+
+#pragma mark - Diagnostic logging
+
+RCT_EXPORT_METHOD(logDiagnostic:(NSString *)message)
+{
+    NSLog(@"SKEDOGGLE_DIAG %@", message);
+}
 
 #pragma mark - React Native setup
 
@@ -609,8 +611,8 @@ RCT_REMAP_METHOD(
         ];
 
         if (timeDifference <= 60.0) {
-            CLLocationDistance
-                maximumWalkingSpeed = 13.5;
+            CLLocationDistance maximumWalkingSpeed =
+                13.5;
 
             CLLocationDistance accuracyAllowance =
                 MAX(
@@ -620,13 +622,12 @@ RCT_REMAP_METHOD(
                         .horizontalAccuracy
                 );
 
-            CLLocationDistance
-                maximumAllowedDistance =
-                    (
-                        maximumWalkingSpeed *
-                        timeDifference
-                    ) +
-                    accuracyAllowance;
+            CLLocationDistance maximumAllowedDistance =
+                (
+                    maximumWalkingSpeed *
+                    timeDifference
+                ) +
+                accuracyAllowance;
 
             if (
                 distance >
