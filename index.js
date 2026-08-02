@@ -5,159 +5,141 @@ import {
 
 const { BuddybossCustomCode } = NativeModules;
 
-const describeObject = (
-    label,
-    value,
-    depth = 0
+const nativeLog = (stage, data = {}) => {
+    try {
+        if (
+            BuddybossCustomCode &&
+            typeof BuddybossCustomCode.logDiagnostic ===
+                'function'
+        ) {
+            BuddybossCustomCode.logDiagnostic(
+                JSON.stringify({
+                    stage,
+                    platform: Platform.OS,
+                    ...data,
+                })
+            );
+        }
+    } catch (error) {
+        // We intentionally avoid console.log because it may not
+        // appear in the macOS device Console.
+    }
+};
+
+const inspectApi = (
+    name,
+    api
 ) => {
     try {
-        if (value == null) {
-            console.log(
-                `SKEDOGGLE_DIAG_${label}`,
-                value
-            );
+        if (!api) {
+            nativeLog('API_MISSING', {
+                name,
+            });
             return;
         }
 
-        const keys = Object.keys(value);
+        const keys = Object.keys(api);
 
-        console.log(
-            `SKEDOGGLE_DIAG_${label}_KEYS`,
-            keys
-        );
-
-        if (depth >= 2) {
-            return;
-        }
+        nativeLog('API_KEYS', {
+            name,
+            keys,
+        });
 
         keys.forEach((key) => {
+            let valueType = 'unknown';
+
             try {
-                const child = value[key];
-
-                console.log(
-                    `SKEDOGGLE_DIAG_${label}_${key}_TYPE`,
-                    typeof child
-                );
-
-                if (
-                    child &&
-                    typeof child === 'object'
-                ) {
-                    describeObject(
-                        `${label}_${key}`,
-                        child,
-                        depth + 1
-                    );
-                }
+                valueType = typeof api[key];
             } catch (error) {
-                console.error(
-                    `SKEDOGGLE_DIAG_${label}_${key}_ERROR`,
-                    error
-                );
+                valueType = 'error';
             }
+
+            nativeLog('API_PROPERTY', {
+                api: name,
+                key,
+                valueType,
+            });
         });
     } catch (error) {
-        console.error(
-            `SKEDOGGLE_DIAG_${label}_ERROR`,
-            error
-        );
+        nativeLog('API_INSPECTION_ERROR', {
+            name,
+            error: String(error),
+        });
     }
 };
 
 export const applyCustomCode = (
     externalCodeSetup
 ) => {
-    console.log(
-        'SKEDOGGLE_DIAG_APPLY_CUSTOM_CODE_STARTED'
-    );
+    nativeLog('APPLY_CUSTOM_CODE_STARTED', {
+        nativeModulePresent:
+            Boolean(BuddybossCustomCode),
 
-    console.log(
-        'SKEDOGGLE_DIAG_PLATFORM',
-        Platform.OS
-    );
-
-    console.log(
-        'SKEDOGGLE_DIAG_NATIVE_MODULE_PRESENT',
-        Boolean(BuddybossCustomCode)
-    );
-
-    console.log(
-        'SKEDOGGLE_DIAG_NATIVE_MODULES_WITH_BUDDY_NAME',
-        Object.keys(NativeModules).filter(
-            (name) =>
-                name
-                    .toLowerCase()
-                    .includes('buddy')
-        )
-    );
-
-    if (BuddybossCustomCode) {
-        console.log(
-            'SKEDOGGLE_DIAG_CUSTOM_MODULE_METHODS',
-            Object.keys(BuddybossCustomCode)
-        );
-
-        if (
-            typeof BuddybossCustomCode
-                .getBufferedLocations ===
-            'function'
-        ) {
+        nativeModuleKeys:
             BuddybossCustomCode
-                .getBufferedLocations()
-                .then((locations) => {
-                    console.log(
-                        'SKEDOGGLE_DIAG_EXISTING_BUFFER',
-                        Array.isArray(locations)
-                            ? locations.length
-                            : locations
-                    );
-                })
-                .catch((error) => {
-                    console.error(
-                        'SKEDOGGLE_DIAG_BUFFER_ERROR',
-                        error
-                    );
-                });
-        }
+                ? Object.keys(
+                      BuddybossCustomCode
+                  )
+                : [],
+    });
+
+    if (!BuddybossCustomCode) {
+        return;
     }
 
     if (!externalCodeSetup) {
-        console.error(
-            'SKEDOGGLE_DIAG_EXTERNAL_CODE_SETUP_MISSING'
+        nativeLog(
+            'EXTERNAL_CODE_SETUP_MISSING'
         );
         return;
     }
 
-    describeObject(
-        'EXTERNAL_CODE_SETUP',
-        externalCodeSetup
+    const setupKeys =
+        Object.keys(externalCodeSetup);
+
+    nativeLog(
+        'EXTERNAL_CODE_SETUP_KEYS',
+        {
+            keys: setupKeys,
+        }
     );
 
     /*
-     Specifically inspect any APIs whose names suggest browser,
-     WebView, app-page, HTML or messaging support.
+     Inspect every top-level BuddyBoss API.
     */
-    Object.keys(externalCodeSetup)
-        .filter((key) => {
-            const normalised =
+    setupKeys.forEach((key) => {
+        inspectApi(
+            key,
+            externalCodeSetup[key]
+        );
+    });
+
+    /*
+     Highlight APIs whose names suggest that they may provide
+     WebView or message handling.
+    */
+    const possibleWebApis =
+        setupKeys.filter((key) => {
+            const name =
                 key.toLowerCase();
 
             return (
-                normalised.includes('web') ||
-                normalised.includes('message') ||
-                normalised.includes('html') ||
-                normalised.includes('page') ||
-                normalised.includes('browser')
-            );
-        })
-        .forEach((key) => {
-            describeObject(
-                `POSSIBLE_WEB_API_${key}`,
-                externalCodeSetup[key]
+                name.includes('web') ||
+                name.includes('message') ||
+                name.includes('browser') ||
+                name.includes('html') ||
+                name.includes('page')
             );
         });
 
-    console.log(
-        'SKEDOGGLE_DIAG_APPLY_CUSTOM_CODE_COMPLETE'
+    nativeLog(
+        'POSSIBLE_WEB_APIS',
+        {
+            keys: possibleWebApis,
+        }
+    );
+
+    nativeLog(
+        'APPLY_CUSTOM_CODE_COMPLETE'
     );
 };
