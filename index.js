@@ -1,6 +1,7 @@
 import {
-    NativeModules,
+    AppState,
     NativeEventEmitter,
+    NativeModules,
     Platform,
 } from 'react-native';
 
@@ -22,60 +23,6 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         return;
     }
 
-    /*
-     Listen for locations produced by the native iOS
-     CLLocationManager module.
-    */
-    const emitter = new NativeEventEmitter(
-        BuddybossCustomCode
-    );
-
-    emitter.addListener(
-        'SkedoggleLocation',
-        (locationData) => {
-            console.log(
-                'SKEDOGGLE_RN_NATIVE_LOCATION_RECEIVED',
-                locationData
-            );
-
-            const sendMessageToWebView =
-                externalCodeSetup
-                    .webviewHooksApi
-                    ?.sendMessageToWebView;
-
-            if (
-                typeof sendMessageToWebView !== 'function'
-            ) {
-                console.error(
-                    'SKEDOGGLE_RN_SEND_TO_WEBVIEW_UNAVAILABLE'
-                );
-
-                return;
-            }
-
-            try {
-                const message =
-                    typeof locationData === 'string'
-                        ? locationData
-                        : JSON.stringify(locationData);
-
-                sendMessageToWebView(message);
-
-                console.log(
-                    'SKEDOGGLE_RN_LOCATION_FORWARDED_TO_WEBVIEW'
-                );
-            } catch (error) {
-                console.error(
-                    'SKEDOGGLE_RN_LOCATION_FORWARD_FAILED',
-                    error
-                );
-            }
-        }
-    );
-
-    /*
-     Obtain BuddyBoss's WebView hooks.
-    */
     const webviewHooksApi =
         externalCodeSetup.webviewHooksApi;
 
@@ -87,26 +34,216 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         return;
     }
 
-    /*
-     This function handles messages sent by the website using:
+    const sendMessageToWebView =
+        webviewHooksApi.sendMessageToWebView;
 
-     window.ReactNativeWebView.postMessage(...)
+    if (
+        typeof sendMessageToWebView !== 'function'
+    ) {
+        console.error(
+            'SKEDOGGLE_RN_SEND_TO_WEBVIEW_UNAVAILABLE'
+        );
+
+        return;
+    }
+
+    /*
+     Prevent simultaneous replay attempts.
     */
-    const messageHandler = (message) => {
+    let replayInProgress = false;
+
+    /*
+     Forward one location into the WebView.
+
+     Only acknowledge it after sendMessageToWebView completes without
+     throwing. Unacknowledged points remain in native storage.
+    */
+    const forwardLocation = async (
+        locationData: any
+    ) => {
+        if (!locationData) {
+            return;
+        }
+
+        try {
+            const message =
+                typeof locationData === 'string'
+                    ? locationData
+                    : JSON.stringify(locationData);
+
+            sendMessageToWebView(message);
+
+            console.log(
+                'SKEDOGGLE_RN_LOCATION_FORWARDED_TO_WEBVIEW',
+                locationData?.ts
+            );
+
+            if (
+                locationData?.ts != null &&
+                typeof BuddybossCustomCode
+                    .acknowledgeLocation ===
+                    'function'
+            ) {
+                await BuddybossCustomCode
+                    .acknowledgeLocation(
+                        locationData.ts
+                    );
+            }
+        } catch (error) {
+            console.error(
+                'SKEDOGGLE_RN_LOCATION_FORWARD_FAILED',
+                error,
+                locationData
+            );
+
+            throw error;
+        }
+    };
+
+    /*
+     Retrieve points that were collected while React Native or the
+     WebView was suspended.
+    */
+    const replayBufferedLocations =
+        async () => {
+            if (replayInProgress) {
+                return;
+            }
+
+            if (
+                typeof BuddybossCustomCode
+                    .getBufferedLocations !==
+                    'function'
+            ) {
+                console.error(
+                    'SKEDOGGLE_RN_BUFFER_METHOD_UNAVAILABLE'
+                );
+
+                return;
+            }
+
+            replayInProgress = true;
+
+            try {
+                const bufferedLocations =
+                    await BuddybossCustomCode
+                        .getBufferedLocations();
+
+                if (
+                    !Array.isArray(
+                        bufferedLocations
+                    ) ||
+                    bufferedLocations.length === 0
+                ) {
+                    console.log(
+                        'SKEDOGGLE_RN_NO_BUFFERED_LOCATIONS'
+                    );
+
+                    return;
+                }
+
+                /*
+                 Preserve the original native timestamps and replay
+                 chronologically.
+                */
+                const orderedLocations = [
+                    ...bufferedLocations,
+                ].sort(
+                    (a, b) =>
+                        Number(a?.ts || 0) -
+                        Number(b?.ts || 0)
+                );
+
+                console.log(
+                    'SKEDOGGLE_RN_REPLAYING_BUFFERED_LOCATIONS',
+                    orderedLocations.length
+                );
+
+                for (
+                    const locationData
+                    of orderedLocations
+                ) {
+                    await forwardLocation(
+                        locationData
+                    );
+                }
+
+                console.log(
+                    'SKEDOGGLE_RN_BUFFER_REPLAY_COMPLETE'
+                );
+            } catch (error) {
+                console.error(
+                    'SKEDOGGLE_RN_BUFFER_REPLAY_FAILED',
+                    error
+                );
+            } finally {
+                replayInProgress = false;
+            }
+        };
+
+    /*
+     Receive live events while React Native is awake.
+    */
+    const emitter =
+        new NativeEventEmitter(
+            BuddybossCustomCode
+        );
+
+    emitter.addListener(
+        'SkedoggleLocation',
+        async (locationData) => {
+            console.log(
+                'SKEDOGGLE_RN_NATIVE_LOCATION_RECEIVED',
+                locationData
+            );
+
+            try {
+                await forwardLocation(
+                    locationData
+                );
+            } catch (error) {
+                /*
+                 Do nothing else here.
+
+                 The point remains in native storage and will be retried
+                 after the app becomes active.
+                */
+            }
+        }
+    );
+
+    /*
+     Replay native points whenever the app becomes active after being
+     locked or backgrounded.
+    */
+    AppState.addEventListener(
+        'change',
+        (nextAppState) => {
+            console.log(
+                'SKEDOGGLE_RN_APP_STATE',
+                nextAppState
+            );
+
+            if (nextAppState === 'active') {
+                setTimeout(
+                    () => {
+                        replayBufferedLocations();
+                    },
+                    750
+                );
+            }
+        }
+    );
+
+    const messageHandler = async (
+        message: any
+    ) => {
         console.log(
             'SKEDOGGLE_RN_WEBVIEW_MESSAGE_RECEIVED',
             message
         );
 
         try {
-            /*
-             BuddyBoss may provide:
-
-             1. A plain JSON string
-             2. An object
-             3. A React Native event containing nativeEvent.data
-             4. An object containing data
-            */
             const rawMessage =
                 message?.nativeEvent?.data ??
                 message?.data ??
@@ -137,22 +274,14 @@ export const applyCustomCode = (externalCodeSetup: any) => {
                     'SKEDOGGLE_RN_START_TRACKING_RECEIVED'
                 );
 
-                Promise.resolve(
-                    BuddybossCustomCode
-                        .startBackgroundTracking()
-                )
-                    .then((result) => {
-                        console.log(
-                            'SKEDOGGLE_RN_NATIVE_START_SUCCESS',
-                            result
-                        );
-                    })
-                    .catch((error) => {
-                        console.error(
-                            'SKEDOGGLE_RN_NATIVE_START_FAILED',
-                            error
-                        );
-                    });
+                const result =
+                    await BuddybossCustomCode
+                        .startBackgroundTracking();
+
+                console.log(
+                    'SKEDOGGLE_RN_NATIVE_START_SUCCESS',
+                    result
+                );
 
                 return;
             }
@@ -165,22 +294,26 @@ export const applyCustomCode = (externalCodeSetup: any) => {
                     'SKEDOGGLE_RN_STOP_TRACKING_RECEIVED'
                 );
 
-                Promise.resolve(
-                    BuddybossCustomCode
-                        .stopBackgroundTracking()
-                )
-                    .then((result) => {
-                        console.log(
-                            'SKEDOGGLE_RN_NATIVE_STOP_SUCCESS',
-                            result
-                        );
-                    })
-                    .catch((error) => {
-                        console.error(
-                            'SKEDOGGLE_RN_NATIVE_STOP_FAILED',
-                            error
-                        );
-                    });
+                /*
+                 First replay anything collected during the locked-screen
+                 part of the walk.
+                */
+                await replayBufferedLocations();
+
+                const result =
+                    await BuddybossCustomCode
+                        .stopBackgroundTracking();
+
+                /*
+                 A final replay catches a point that may have arrived
+                 during the stop operation.
+                */
+                await replayBufferedLocations();
+
+                console.log(
+                    'SKEDOGGLE_RN_NATIVE_STOP_SUCCESS',
+                    result
+                );
 
                 return;
             }
@@ -198,26 +331,34 @@ export const applyCustomCode = (externalCodeSetup: any) => {
         }
     };
 
-    /*
-     Register the handler using the BuddyBoss API already
-     present in your original file.
-    */
     if (
-        typeof webviewHooksApi.addMessageHandler ===
+        typeof webviewHooksApi
+            .addMessageHandler ===
         'function'
     ) {
-        webviewHooksApi.addMessageHandler(
-            messageHandler
-        );
+        webviewHooksApi
+            .addMessageHandler(
+                messageHandler
+            );
 
         console.log(
             'SKEDOGGLE_RN_MESSAGE_HANDLER_REGISTERED'
+        );
+    } else {
+        console.error(
+            'SKEDOGGLE_RN_ADD_MESSAGE_HANDLER_UNAVAILABLE'
         );
 
         return;
     }
 
-    console.error(
-        'SKEDOGGLE_RN_ADD_MESSAGE_HANDLER_UNAVAILABLE'
+    /*
+     Replay anything still present when custom code initially loads.
+    */
+    setTimeout(
+        () => {
+            replayBufferedLocations();
+        },
+        1000
     );
 };
