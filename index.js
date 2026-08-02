@@ -3,85 +3,139 @@ import {
     Platform,
 } from 'react-native';
 
-const { BuddybossCustomCode } = NativeModules;
+const { BuddybossCustomCode } =
+    NativeModules;
 
-const nativeLog = (stage, data = {}) => {
+const safeKeys = (value) => {
     try {
         if (
-            BuddybossCustomCode &&
-            typeof BuddybossCustomCode.logDiagnostic ===
+            value === null ||
+            value === undefined
+        ) {
+            return [];
+        }
+
+        return Object.keys(value);
+    } catch (error) {
+        return [
+            `KEY_ERROR:${String(error)}`,
+        ];
+    }
+};
+
+const nativeLog = (
+    stage,
+    details = {}
+) => {
+    try {
+        if (
+            !BuddybossCustomCode ||
+            typeof BuddybossCustomCode
+                .logDiagnostic !==
                 'function'
         ) {
-            BuddybossCustomCode.logDiagnostic(
-                JSON.stringify({
-                    stage,
-                    platform: Platform.OS,
-                    ...data,
-                })
-            );
+            return;
         }
+
+        const message =
+            JSON.stringify({
+                stage,
+                platform: Platform.OS,
+                timestamp:
+                    new Date().toISOString(),
+                ...details,
+            });
+
+        BuddybossCustomCode
+            .logDiagnostic(message);
     } catch (error) {
-        // We intentionally avoid console.log because it may not
-        // appear in the macOS device Console.
+        /*
+         There is deliberately no console logging here.
+         All useful output is written to the native text file.
+        */
     }
 };
 
 const inspectApi = (
-    name,
-    api
+    apiName,
+    apiValue
 ) => {
     try {
-        if (!api) {
-            nativeLog('API_MISSING', {
-                name,
-            });
+        if (
+            apiValue === null ||
+            apiValue === undefined
+        ) {
+            nativeLog(
+                'API_MISSING',
+                {
+                    apiName,
+                }
+            );
+
             return;
         }
 
-        const keys = Object.keys(api);
+        const keys =
+            safeKeys(apiValue);
 
-        nativeLog('API_KEYS', {
-            name,
-            keys,
-        });
+        nativeLog(
+            'API_KEYS',
+            {
+                apiName,
+                keys,
+            }
+        );
 
         keys.forEach((key) => {
-            let valueType = 'unknown';
+            let valueType =
+                'unknown';
 
             try {
-                valueType = typeof api[key];
+                valueType =
+                    typeof apiValue[key];
             } catch (error) {
-                valueType = 'error';
+                valueType =
+                    `ERROR:${String(error)}`;
             }
 
-            nativeLog('API_PROPERTY', {
-                api: name,
-                key,
-                valueType,
-            });
+            nativeLog(
+                'API_PROPERTY',
+                {
+                    apiName,
+                    key,
+                    valueType,
+                }
+            );
         });
     } catch (error) {
-        nativeLog('API_INSPECTION_ERROR', {
-            name,
-            error: String(error),
-        });
+        nativeLog(
+            'API_INSPECTION_ERROR',
+            {
+                apiName,
+                error:
+                    String(error),
+            }
+        );
     }
 };
 
 export const applyCustomCode = (
     externalCodeSetup
 ) => {
-    nativeLog('APPLY_CUSTOM_CODE_STARTED', {
-        nativeModulePresent:
-            Boolean(BuddybossCustomCode),
+    nativeLog(
+        'APPLY_CUSTOM_CODE_STARTED',
+        {
+            nativeModulePresent:
+                Boolean(
+                    BuddybossCustomCode
+                ),
 
-        nativeModuleKeys:
-            BuddybossCustomCode
-                ? Object.keys(
-                      BuddybossCustomCode
-                  )
-                : [],
-    });
+            nativeModuleKeys:
+                safeKeys(
+                    BuddybossCustomCode
+                ),
+        }
+    );
 
     if (!BuddybossCustomCode) {
         return;
@@ -91,11 +145,14 @@ export const applyCustomCode = (
         nativeLog(
             'EXTERNAL_CODE_SETUP_MISSING'
         );
+
         return;
     }
 
     const setupKeys =
-        Object.keys(externalCodeSetup);
+        safeKeys(
+            externalCodeSetup
+        );
 
     nativeLog(
         'EXTERNAL_CODE_SETUP_KEYS',
@@ -104,9 +161,6 @@ export const applyCustomCode = (
         }
     );
 
-    /*
-     Inspect every top-level BuddyBoss API.
-    */
     setupKeys.forEach((key) => {
         inspectApi(
             key,
@@ -114,28 +168,36 @@ export const applyCustomCode = (
         );
     });
 
-    /*
-     Highlight APIs whose names suggest that they may provide
-     WebView or message handling.
-    */
     const possibleWebApis =
         setupKeys.filter((key) => {
-            const name =
-                key.toLowerCase();
+            const normalised =
+                String(key)
+                    .toLowerCase();
 
             return (
-                name.includes('web') ||
-                name.includes('message') ||
-                name.includes('browser') ||
-                name.includes('html') ||
-                name.includes('page')
+                normalised.includes(
+                    'web'
+                ) ||
+                normalised.includes(
+                    'message'
+                ) ||
+                normalised.includes(
+                    'browser'
+                ) ||
+                normalised.includes(
+                    'html'
+                ) ||
+                normalised.includes(
+                    'page'
+                )
             );
         });
 
     nativeLog(
         'POSSIBLE_WEB_APIS',
         {
-            keys: possibleWebApis,
+            keys:
+                possibleWebApis,
         }
     );
 
