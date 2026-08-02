@@ -10,6 +10,11 @@ static NSString *const SkedoggleBufferedLocationsKey =
 
 @implementation BuddybossCustomCode
 {
+
+RCT_EXPORT_METHOD(logDiagnostic:(NSString *)message)
+{
+    NSLog(@"SKEDOGGLE_DIAG %@", message);
+}
     CLLocationManager *_locationManager;
 
     BOOL _isTracking;
