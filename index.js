@@ -2,9 +2,11 @@ import React, {
     useCallback,
     useEffect,
     useRef,
+    useState,
 } from 'react';
 
 import {
+    ActivityIndicator,
     Alert,
     AppState,
     Linking,
@@ -12,6 +14,11 @@ import {
     PermissionsAndroid,
     NativeModules,
     Platform,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
     View,
 } from 'react-native';
 
@@ -289,9 +296,186 @@ const normaliseLocation = (
     return point;
 };
 
+const WalkLocationIntroduction = ({
+    loading,
+    saving,
+    onContinue,
+}) => {
+    return (
+        <SafeAreaView
+            style={
+                styles.introSafeArea
+            }
+        >
+            <ScrollView
+                contentContainerStyle={
+                    styles.introContent
+                }
+                showsVerticalScrollIndicator={
+                    false
+                }
+            >
+                <View
+                    style={
+                        styles.introPawCircle
+                    }
+                >
+                    <Text
+                        style={
+                            styles.introPaw
+                        }
+                    >
+                        🐾
+                    </Text>
+                </View>
+
+                <Text
+                    style={
+                        styles.introTitle
+                    }
+                >
+                    Location helps map every step
+                </Text>
+
+                <Text
+                    style={
+                        styles.introLead
+                    }
+                >
+                    Skedoggle uses your location only when you choose to record a dog walk.
+                </Text>
+
+                <View
+                    style={
+                        styles.introCard
+                    }
+                >
+                    <Text
+                        style={
+                            styles.introCardTitle
+                        }
+                    >
+                        Accurate routes
+                    </Text>
+
+                    <Text
+                        style={
+                            styles.introCardText
+                        }
+                    >
+                        When iOS asks, choose Allow While Using App and make sure Precise Location is on in Location Settings.
+                    </Text>
+                </View>
+
+                <View
+                    style={
+                        styles.introCard
+                    }
+                >
+                    <Text
+                        style={
+                            styles.introCardTitle
+                        }
+                    >
+                        Lock your screen
+                    </Text>
+
+                    <Text
+                        style={
+                            styles.introCardText
+                        }
+                    >
+                        You can lock your phone while your walk is active. Skedoggle continues collecting your route and updates the map when the app becomes active again.
+                    </Text>
+                </View>
+
+                <View
+                    style={
+                        styles.introCard
+                    }
+                >
+                    <Text
+                        style={
+                            styles.introCardTitle
+                        }
+                    >
+                        You stay in control
+                    </Text>
+
+                    <Text
+                        style={
+                            styles.introCardText
+                        }
+                    >
+                        Walk tracking starts only when you press Start and stops when you end your walk.
+                    </Text>
+                </View>
+
+                {loading ? (
+                    <View
+                        style={
+                            styles.introLoading
+                        }
+                    >
+                        <ActivityIndicator
+                            size="large"
+                        />
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        activeOpacity={
+                            0.85
+                        }
+                        disabled={
+                            saving
+                        }
+                        onPress={
+                            onContinue
+                        }
+                        style={[
+                            styles.introButton,
+                            saving &&
+                                styles.introButtonDisabled,
+                        ]}
+                    >
+                        {saving ? (
+                            <ActivityIndicator
+                                color="#ffffff"
+                            />
+                        ) : (
+                            <Text
+                                style={
+                                    styles.introButtonText
+                                }
+                            >
+                                Continue to walk tracking
+                            </Text>
+                        )}
+                    </TouchableOpacity>
+                )}
+
+                <Text
+                    style={
+                        styles.introFooter
+                    }
+                >
+                    You can change location access at any time in your iPhone Settings.
+                </Text>
+            </ScrollView>
+        </SafeAreaView>
+    );
+};
+
 const WalkNativeSidecar = ({
     defaultComponent,
 }) => {
+    const [walkIntroState, setWalkIntroState] =
+        useState(
+            Platform.OS === 'ios'
+                ? 'checking'
+                : 'hidden'
+        );
+
     const lastCommandIdRef =
         useRef('');
 
@@ -307,6 +491,101 @@ const WalkNativeSidecar = ({
     const appStateRef =
         useRef(
             AppState.currentState
+        );
+
+    useEffect(
+        () => {
+            let cancelled =
+                false;
+
+            const checkWalkIntroduction =
+                async () => {
+                    if (
+                        Platform.OS !==
+                        'ios'
+                    ) {
+                        if (!cancelled) {
+                            setWalkIntroState(
+                                'hidden'
+                            );
+                        }
+
+                        return;
+                    }
+
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.hasSeenWalkLocationIntro !==
+                        'function'
+                    ) {
+                        if (!cancelled) {
+                            setWalkIntroState(
+                                'hidden'
+                            );
+                        }
+
+                        return;
+                    }
+
+                    try {
+                        const result =
+                            await BuddybossCustomCode
+                                .hasSeenWalkLocationIntro();
+
+                        if (!cancelled) {
+                            setWalkIntroState(
+                                result?.seen
+                                    ? 'hidden'
+                                    : 'visible'
+                            );
+                        }
+                    } catch (error) {
+                        if (!cancelled) {
+                            setWalkIntroState(
+                                'hidden'
+                            );
+                        }
+                    }
+                };
+
+            checkWalkIntroduction();
+
+            return () => {
+                cancelled =
+                    true;
+            };
+        },
+        []
+    );
+
+    const continueToWalkTracking =
+        useCallback(
+            async () => {
+                setWalkIntroState(
+                    'saving'
+                );
+
+                try {
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.markWalkLocationIntroSeen ===
+                        'function'
+                    ) {
+                        await BuddybossCustomCode
+                            .markWalkLocationIntroSeen();
+                    }
+                } catch (error) {
+                    /*
+                     Do not prevent access to the walk tracker if the
+                     preference could not be saved.
+                    */
+                } finally {
+                    setWalkIntroState(
+                        'hidden'
+                    );
+                }
+            },
+            []
         );
 
     const acknowledgePoints =
@@ -467,6 +746,15 @@ const WalkNativeSidecar = ({
             async (
                 commandData
             ) => {
+                if (
+                    Platform.OS ===
+                        'ios' &&
+                    walkIntroState !==
+                        'hidden'
+                ) {
+                    return;
+                }
+
                 const command =
                     commandData
                         ?.command;
@@ -578,16 +866,68 @@ const WalkNativeSidecar = ({
                                 permissionStatus === 3 ||
                                 permissionStatus === 4;
 
-                            if (locationGranted) {
+                            const preciseLocationEnabled =
+                                result?.preciseLocationEnabled !==
+                                false;
+
+                            if (
+                                locationGranted &&
+                                preciseLocationEnabled
+                            ) {
                                 Alert.alert(
                                     'Walk tracking started',
                                     [
-                                        'Location tracking is active.',
+                                        'Your location is being recorded.',
                                         '',
-                                        'You can lock your phone while recording your walk. Your route will update when Skedoggle becomes active again.',
-                                        '',
-                                        'For the most accurate route, make sure Precise Location is switched on.'
+                                        'You can lock your phone while your walk is active. Your route will update when Skedoggle becomes active again.'
                                     ].join('\n')
+                                );
+                            } else if (
+                                locationGranted &&
+                                !preciseLocationEnabled
+                            ) {
+                                Alert.alert(
+                                    'Precise Location is off',
+                                    [
+                                        'Skedoggle needs precise location to map your walk accurately.',
+                                        '',
+                                        'Please make sure Precise Location is on in Skedoggle’s Location Settings.'
+                                    ].join('\n'),
+                                    [
+                                        {
+                                            text:
+                                                'Continue Anyway',
+                                            style:
+                                                'cancel'
+                                        },
+                                        {
+                                            text:
+                                                'Open Settings',
+                                            onPress:
+                                                async () => {
+                                                    trackingRef.current =
+                                                        false;
+
+                                                    try {
+                                                        if (
+                                                            typeof BuddybossCustomCode
+                                                                ?.stopBackgroundTracking ===
+                                                            'function'
+                                                        ) {
+                                                            await BuddybossCustomCode
+                                                                .stopBackgroundTracking();
+                                                        }
+                                                    } catch (error) {
+                                                        /*
+                                                         Open Settings even if stopping fails.
+                                                        */
+                                                    }
+
+                                                    Linking
+                                                        .openSettings();
+                                                }
+                                        }
+                                    ]
                                 );
                             } else {
                                 trackingRef.current =
@@ -598,9 +938,7 @@ const WalkNativeSidecar = ({
                                     [
                                         'Skedoggle needs location access to record your walk.',
                                         '',
-                                        'Tap Open Settings and select While Using the App.',
-                                        '',
-                                        'For the most accurate route, make sure Precise Location is switched on.'
+                                        'Open Settings, select While Using the App, and make sure Precise Location is on.'
                                     ].join('\n'),
                                     [
                                         {
@@ -747,6 +1085,7 @@ const WalkNativeSidecar = ({
             [
                 acknowledgeCommand,
                 flushBufferedPoints,
+                walkIntroState,
             ]
         );
 
@@ -907,6 +1246,29 @@ const WalkNativeSidecar = ({
         ]
     );
 
+    if (
+        Platform.OS ===
+            'ios' &&
+        walkIntroState !==
+            'hidden'
+    ) {
+        return (
+            <WalkLocationIntroduction
+                loading={
+                    walkIntroState ===
+                    'checking'
+                }
+                saving={
+                    walkIntroState ===
+                    'saving'
+                }
+                onContinue={
+                    continueToWalkTracking
+                }
+            />
+        );
+    }
+
     return (
         <View
             style={{
@@ -917,6 +1279,135 @@ const WalkNativeSidecar = ({
         </View>
     );
 };
+
+const styles = StyleSheet.create({
+    introSafeArea: {
+        flex: 1,
+        backgroundColor:
+            '#ffffff',
+    },
+
+    introContent: {
+        flexGrow: 1,
+        paddingHorizontal: 24,
+        paddingTop: 36,
+        paddingBottom: 28,
+        justifyContent:
+            'center',
+    },
+
+    introPawCircle: {
+        width: 78,
+        height: 78,
+        borderRadius: 39,
+        alignItems:
+            'center',
+        justifyContent:
+            'center',
+        alignSelf:
+            'center',
+        backgroundColor:
+            '#f8e7f4',
+        marginBottom: 22,
+    },
+
+    introPaw: {
+        fontSize: 38,
+    },
+
+    introTitle: {
+        color:
+            '#261e8c',
+        fontSize: 29,
+        fontWeight:
+            '700',
+        lineHeight: 35,
+        textAlign:
+            'center',
+        marginBottom: 14,
+    },
+
+    introLead: {
+        color:
+            '#3f3f46',
+        fontSize: 17,
+        lineHeight: 25,
+        textAlign:
+            'center',
+        marginBottom: 24,
+    },
+
+    introCard: {
+        backgroundColor:
+            '#f7f7fa',
+        borderRadius: 16,
+        paddingHorizontal: 18,
+        paddingVertical: 16,
+        marginBottom: 12,
+    },
+
+    introCardTitle: {
+        color:
+            '#261e8c',
+        fontSize: 17,
+        fontWeight:
+            '700',
+        marginBottom: 6,
+    },
+
+    introCardText: {
+        color:
+            '#52525b',
+        fontSize: 15,
+        lineHeight: 22,
+    },
+
+    introLoading: {
+        minHeight: 62,
+        alignItems:
+            'center',
+        justifyContent:
+            'center',
+        marginTop: 14,
+    },
+
+    introButton: {
+        minHeight: 56,
+        borderRadius: 28,
+        backgroundColor:
+            '#d622a6',
+        alignItems:
+            'center',
+        justifyContent:
+            'center',
+        paddingHorizontal: 22,
+        marginTop: 16,
+    },
+
+    introButtonDisabled: {
+        opacity: 0.7,
+    },
+
+    introButtonText: {
+        color:
+            '#ffffff',
+        fontSize: 17,
+        fontWeight:
+            '700',
+        textAlign:
+            'center',
+    },
+
+    introFooter: {
+        color:
+            '#71717a',
+        fontSize: 13,
+        lineHeight: 19,
+        textAlign:
+            'center',
+        marginTop: 16,
+    },
+});
 
 export const applyCustomCode = (
     externalCodeSetup
