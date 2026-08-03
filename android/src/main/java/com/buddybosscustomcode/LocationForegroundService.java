@@ -54,27 +54,18 @@ public class LocationForegroundService
 
     /*
      Background fixes can be less accurate than foreground fixes.
-
-     The previous 40-metre cutoff was aggressive and could reject every
-     point during weaker GPS conditions.
     */
     private static final float MAX_ACCURACY_METRES =
             100.0f;
 
     /*
      Approximately 30 mph / 48 km/h.
-
-     This remains deliberately generous for a dog-walking tracker while
-     still rejecting obvious GPS teleportation.
     */
     private static final double MAX_SPEED_METRES_PER_SECOND =
             13.5;
 
     /*
      Only compare movement speed across relatively close readings.
-
-     After a longer gap, the new accurate point becomes the new anchor
-     instead of being compared against an old location indefinitely.
     */
     private static final double MAX_FILTER_GAP_SECONDS =
             60.0;
@@ -127,16 +118,12 @@ public class LocationForegroundService
         */
         startForegroundWithNotification();
 
-        /*
-         Start a new filtering session only when updates have not
-         already been registered. This avoids resetting the anchor if
-         startBackgroundTracking is called twice.
-        */
         if (!updatesRequested) {
             lastGoodLocation = null;
 
             trackingStartedElapsedNanos =
-                    SystemClock.elapsedRealtimeNanos();
+                    SystemClock.elapsedRealtime()
+                            * 1_000_000L;
 
             startLocationUpdates();
         }
@@ -232,17 +219,10 @@ public class LocationForegroundService
         }
 
         try {
-            /*
-             Defensive cleanup in case this method is called more than
-             once for the same service instance.
-            */
             locationManager.removeUpdates(this);
 
             boolean providerRegistered = false;
 
-            /*
-             Register GPS when available.
-            */
             if (locationManager.isProviderEnabled(
                     LocationManager.GPS_PROVIDER
             )) {
@@ -261,13 +241,6 @@ public class LocationForegroundService
                 );
             }
 
-            /*
-             Also register the network provider as a fallback.
-
-             Your old code only used the network provider when GPS was
-             completely disabled. If GPS was enabled but unable to get
-             a satellite fix, no fallback points were received.
-            */
             if (locationManager.isProviderEnabled(
                     LocationManager.NETWORK_PROVIDER
             )) {
@@ -360,10 +333,6 @@ public class LocationForegroundService
             return;
         }
 
-        /*
-         LocationManager locations should normally contain accuracy,
-         but retain this check for defensive handling.
-        */
         if (!location.hasAccuracy()) {
             Log.d(
                     TAG,
@@ -402,15 +371,10 @@ public class LocationForegroundService
         }
 
         long locationElapsedNanos =
-                location.getElapsedRealtimeNanos();
+                getLocationElapsedRealtimeNanos(
+                        location
+                );
 
-        /*
-         Reject a location generated before this particular tracking
-         session began.
-
-         A five-second allowance prevents tiny clock-boundary differences
-         from rejecting the first valid reading.
-        */
         if (trackingStartedElapsedNanos > 0) {
             long sessionDifferenceNanos =
                     locationElapsedNanos
@@ -430,16 +394,14 @@ public class LocationForegroundService
 
         if (lastGoodLocation != null) {
             long previousElapsedNanos =
-                    lastGoodLocation
-                            .getElapsedRealtimeNanos();
+                    getLocationElapsedRealtimeNanos(
+                            lastGoodLocation
+                    );
 
             long differenceNanos =
                     locationElapsedNanos
                             - previousElapsedNanos;
 
-            /*
-             Ignore duplicate and out-of-order readings.
-            */
             if (differenceNanos <= 0) {
                 Log.d(
                         TAG,
@@ -454,13 +416,10 @@ public class LocationForegroundService
                             / 1_000_000_000.0;
 
             float distanceMetres =
-                    lastGoodLocation.distanceTo(location);
+                    lastGoodLocation.distanceTo(
+                            location
+                    );
 
-            /*
-             Only use speed-based rejection across a reasonably short
-             gap. A point after a long gap is allowed to establish a new
-             anchor.
-            */
             if (differenceSeconds
                     <= MAX_FILTER_GAP_SECONDS) {
 
@@ -498,31 +457,36 @@ public class LocationForegroundService
             }
         }
 
-        /*
-         Copy the location rather than retaining an object supplied by
-         the location framework.
-        */
         lastGoodLocation =
                 new Location(location);
 
-        /*
-         Keep the Unix timestamp for JavaScript.
+        long timestamp =
+                location.getTime();
 
-         The WebView timestamp corrections already discussed must retain
-         this value instead of replacing it with Date.now().
+        /*
+         Save first. If React Native is asleep while the screen is
+         locked, this point remains available for replay after unlock.
         */
+        LocationBuffer.addLocation(
+                getApplicationContext(),
+                location.getLatitude(),
+                location.getLongitude(),
+                timestamp,
+                location.getAccuracy()
+        );
+
         boolean emitted =
                 BuddybossCustomCodeModule
                         .onLocationUpdate(
                                 location.getLatitude(),
                                 location.getLongitude(),
-                                location.getTime(),
+                                timestamp,
                                 location.getAccuracy()
                         );
 
         Log.i(
                 TAG,
-                "Accepted point: lat="
+                "Accepted and buffered point: lat="
                         + location.getLatitude()
                         + " lng="
                         + location.getLongitude()
@@ -533,13 +497,30 @@ public class LocationForegroundService
         );
     }
 
+    private long getLocationElapsedRealtimeNanos(
+            Location location
+    ) {
+        if (Build.VERSION.SDK_INT >= 17) {
+            return location
+                    .getElapsedRealtimeNanos();
+        }
+
+        /*
+         API 16 fallback. Modern BuddyBoss apps will normally never
+         use this branch.
+        */
+        return location.getTime()
+                * 1_000_000L;
+    }
+
     @Override
     public void onProviderEnabled(
             String provider
     ) {
         Log.i(
                 TAG,
-                "Location provider enabled: " + provider
+                "Location provider enabled: "
+                        + provider
         );
     }
 
@@ -549,13 +530,11 @@ public class LocationForegroundService
     ) {
         Log.w(
                 TAG,
-                "Location provider disabled: " + provider
+                "Location provider disabled: "
+                        + provider
         );
     }
 
-    /*
-     Required on older Android versions.
-    */
     @Override
     @SuppressWarnings("deprecation")
     public void onStatusChanged(
