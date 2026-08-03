@@ -4,159 +4,17 @@ import {
     Platform,
 } from 'react-native';
 
-import {
-    getNavigationService,
-} from '@src/utils/NavigationService';
-
 const { BuddybossCustomCode } =
     NativeModules;
 
 let installed = false;
-let diagnosticShown = false;
 
-const safeValue = (value) => {
-    try {
-        if (
-            value === null ||
-            value === undefined
-        ) {
-            return String(value);
-        }
-
-        if (
-            typeof value === 'string' ||
-            typeof value === 'number' ||
-            typeof value === 'boolean'
-        ) {
-            return String(value);
-        }
-
-        return JSON.stringify(
-            value,
-            null,
-            2
-        );
-    } catch (error) {
-        return '[Could not display value]';
-    }
-};
-
-const describeCurrentRoute = () => {
-    try {
-        const navigationService =
-            getNavigationService();
-
-        const route =
-            navigationService
-                ?.getCurrentRoute?.();
-
-        if (!route) {
-            return [
-                'No current route was returned.',
-                '',
-                'Open the walk tracker and wait.',
-            ].join('\n');
-        }
-
-        const params =
-            route.params || {};
-
-        const item =
-            params.item || {};
-
-        return [
-            `Route name: ${
-                route.name ||
-                route.routeName ||
-                '(unknown)'
-            }`,
-            '',
-            `Route key: ${
-                route.key ||
-                '(none)'
-            }`,
-            '',
-            'Route parameter names:',
-            Object.keys(params).length
-                ? Object.keys(params).join(', ')
-                : '(none)',
-            '',
-            `URL parameter: ${
-                params.url ||
-                params.uri ||
-                params.link ||
-                '(none)'
-            }`,
-            '',
-            'Item parameter names:',
-            Object.keys(item).length
-                ? Object.keys(item).join(', ')
-                : '(none)',
-            '',
-            `Item type: ${
-                item.type ||
-                '(none)'
-            }`,
-            '',
-            `Item object: ${
-                item.object ||
-                '(none)'
-            }`,
-            '',
-            `Item label: ${
-                item.label ||
-                '(none)'
-            }`,
-            '',
-            `Item link: ${
-                item.link ||
-                item.url ||
-                item?.data?.link ||
-                '(none)'
-            }`,
-            '',
-            'Full route:',
-            safeValue(route),
-        ].join('\n');
-    } catch (error) {
-        return [
-            'Could not inspect the route.',
-            '',
-            String(
-                error?.message ||
-                error
-            ),
-        ].join('\n');
-    }
-};
-
-const showRouteDiagnostic = () => {
-    if (diagnosticShown) {
-        return;
-    }
-
-    diagnosticShown = true;
-
-    Alert.alert(
-        'Skedoggle Current Screen',
-        describeCurrentRoute(),
-        [
-            {
-                text: 'Check Again',
-                onPress: () => {
-                    diagnosticShown =
-                        false;
-
-                    setTimeout(
-                        showRouteDiagnostic,
-                        500
-                    );
-                },
-            },
-            {
-                text: 'OK',
-            },
-        ]
+const isWalkTrackerUrl = (url) => {
+    return (
+        typeof url === 'string' &&
+        url.includes(
+            'skedoggle.com/track-walk'
+        )
     );
 };
 
@@ -174,47 +32,148 @@ export const applyCustomCode = (
         !BuddybossCustomCode
     ) {
         Alert.alert(
-            'Skedoggle Diagnostic',
-            'The native module is unavailable.'
+            'Skedoggle Bridge Test',
+            'Native module unavailable.'
         );
 
         return;
     }
 
-    const addIndexJsFunction =
+    const pageApi =
         externalCodeSetup
-            ?.indexJsApi
-            ?.addIndexJsFunction;
+            ?.pageScreenHooksApi;
 
     if (
-        typeof addIndexJsFunction !==
+        typeof pageApi
+            ?.setWebViewProps !==
         'function'
     ) {
         Alert.alert(
-            'Skedoggle Diagnostic',
-            'indexJsApi.addIndexJsFunction is unavailable.'
+            'Skedoggle Bridge Test',
+            'setWebViewProps is unavailable.'
         );
 
         return;
     }
 
-    addIndexJsFunction(() => {
-        /*
-         This gives you time to navigate from the initial app screen
-         into the Skedoggle walk tracker.
-        */
-        setTimeout(
-            showRouteDiagnostic,
-            12000
-        );
-    });
+    /*
+     BuddyBoss passes page information here:
+
+     {
+         url,
+         index,
+         online,
+         screenProps,
+         source
+     }
+
+     It does NOT pass the existing WebView props.
+    */
+    pageApi.setWebViewProps(
+        (pageInfo = {}) => {
+            const url =
+                pageInfo.url ||
+                pageInfo.source?.uri ||
+                '';
+
+            if (!isWalkTrackerUrl(url)) {
+                /*
+                 Do not alter any other BuddyBoss page.
+                */
+                return {};
+            }
+
+            return {
+                /*
+                 This runs inside the walk tracker WebView after the
+                 page has loaded.
+
+                 It proves these props were applied to the correct
+                 WebView.
+                */
+                injectedJavaScript: `
+                    (function () {
+                        setTimeout(function () {
+                            alert(
+                                'Native bridge attached to walk tracker'
+                            );
+                        }, 1000);
+                    })();
+
+                    true;
+                `,
+
+                onMessage: async (
+                    event
+                ) => {
+                    const raw =
+                        event?.nativeEvent
+                            ?.data ??
+                        '(no message data)';
+
+                    Alert.alert(
+                        'WebView Message Received',
+                        String(raw)
+                    );
+
+                    let message = null;
+
+                    try {
+                        message =
+                            typeof raw ===
+                                'string'
+                                ? JSON.parse(raw)
+                                : raw;
+                    } catch (error) {
+                        /*
+                         The direct diagnostic message is plain text,
+                         so parsing failure is expected.
+                        */
+                    }
+
+                    if (
+                        message?.action ===
+                        'startTracking'
+                    ) {
+                        try {
+                            const result =
+                                await BuddybossCustomCode
+                                    .startBackgroundTracking();
+
+                            Alert.alert(
+                                'Native GPS Started',
+                                [
+                                    'The walk tracker reached the native module.',
+                                    '',
+                                    `Permission status: ${
+                                        result
+                                            ?.authorizationStatus ??
+                                        'unknown'
+                                    }`,
+                                ].join('\n')
+                            );
+                        } catch (error) {
+                            Alert.alert(
+                                'Native GPS Error',
+                                String(
+                                    error
+                                        ?.message ??
+                                    error
+                                )
+                            );
+                        }
+                    }
+                },
+            };
+        }
+    );
 
     Alert.alert(
-        'Skedoggle Route Test',
+        'Skedoggle Bridge Test',
         [
-            'Route diagnostic installed.',
+            'Corrected PageScreen hook installed.',
             '',
-            'Press OK, open the walk tracker, then wait about 12 seconds.',
+            'Open the walk tracker.',
         ].join('\n')
     );
 };
