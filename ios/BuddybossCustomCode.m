@@ -8,6 +8,9 @@
 static NSString *const SkedoggleBufferedLocationsKey =
     @"SkedoggleBufferedLocations";
 
+static NSString *const SkedoggleWalkLocationIntroSeenKey =
+    @"SkedoggleWalkLocationIntroSeenV2";
+
 static NSString *SkedoggleDebugLogPath(void)
 {
     NSArray<NSString *> *paths =
@@ -163,6 +166,13 @@ static void SkedoggleAppendDebugLog(
      that it has been forwarded into the WebView.
     */
     NSMutableArray<NSDictionary *> *_bufferedLocations;
+
+    /*
+     The initial iOS permission request is asynchronous. Keep the
+     React Native promise until the user has made a choice.
+    */
+    RCTPromiseResolveBlock _pendingStartResolve;
+    RCTPromiseRejectBlock _pendingStartReject;
 }
 
 RCT_EXPORT_MODULE()
@@ -297,6 +307,56 @@ RCT_REMAP_METHOD(
 
     resolve(@{
         @"cleared": @YES
+    });
+}
+
+#pragma mark - Walk location introduction
+
+RCT_REMAP_METHOD(
+    hasSeenWalkLocationIntro,
+    hasSeenWalkLocationIntroWithResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    BOOL seen = [
+        [NSUserDefaults standardUserDefaults]
+            boolForKey:
+                SkedoggleWalkLocationIntroSeenKey
+    ];
+
+    resolve(@{
+        @"seen": @(seen)
+    });
+}
+
+RCT_REMAP_METHOD(
+    markWalkLocationIntroSeen,
+    markWalkLocationIntroSeenWithResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    [
+        [NSUserDefaults standardUserDefaults]
+            setBool:YES
+             forKey:
+                 SkedoggleWalkLocationIntroSeenKey
+    ];
+
+    [
+        [NSUserDefaults standardUserDefaults]
+            synchronize
+    ];
+
+    SkedoggleAppendDebugLog(
+        @"NATIVE walk location introduction marked as seen"
+    );
+
+    resolve(@{
+        @"saved": @YES
     });
 }
 
@@ -566,6 +626,79 @@ RCT_REMAP_METHOD(
 
 #pragma mark - React Native tracking methods
 
+- (BOOL)isPreciseLocationEnabled
+{
+    if (@available(iOS 14.0, *)) {
+        return
+            self->_locationManager
+                .accuracyAuthorization ==
+            CLAccuracyAuthorizationFullAccuracy;
+    }
+
+    /*
+     The Precise Location control was introduced in iOS 14.
+    */
+    return YES;
+}
+
+- (NSDictionary *)trackingStartResultForStatus:
+    (CLAuthorizationStatus)status
+{
+    return @{
+        @"started": @YES,
+        @"authorizationStatus":
+            @(status),
+        @"preciseLocationEnabled":
+            @([self isPreciseLocationEnabled])
+    };
+}
+
+- (void)clearPendingStartPromise
+{
+    self->_pendingStartResolve = nil;
+    self->_pendingStartReject = nil;
+}
+
+- (void)beginLocationTrackingWithStatus:
+        (CLAuthorizationStatus)status
+    resolver:
+        (RCTPromiseResolveBlock)resolve
+{
+    [self clearBufferedLocations];
+
+    self->_trackingStartedAt =
+        [NSDate date];
+
+    self->_lastGoodLocation =
+        nil;
+
+    self->_isTracking =
+        YES;
+
+    [
+        self->_locationManager
+            startUpdatingLocation
+    ];
+
+    BOOL preciseLocationEnabled =
+        [self isPreciseLocationEnabled];
+
+    SkedoggleAppendDebugLog([
+        NSString stringWithFormat:
+            @"NATIVE startUpdatingLocation executed status=%d precise=%@",
+            (int)status,
+            preciseLocationEnabled
+                ? @"YES"
+                : @"NO"
+    ]);
+
+    resolve(
+        [self
+            trackingStartResultForStatus:
+                status]
+    );
+}
+
 RCT_REMAP_METHOD(
     startBackgroundTracking,
     startWithResolver:
@@ -604,6 +737,16 @@ RCT_REMAP_METHOD(
                 return;
             }
 
+            if (self->_pendingStartResolve) {
+                reject(
+                    @"location_start_in_progress",
+                    @"A location permission request is already in progress.",
+                    nil
+                );
+
+                return;
+            }
+
             CLAuthorizationStatus status =
                 self->_locationManager
                     .authorizationStatus;
@@ -633,27 +776,16 @@ RCT_REMAP_METHOD(
                 return;
             }
 
-            [self clearBufferedLocations];
-
-            self->_trackingStartedAt =
-                [NSDate date];
-
-            self->_lastGoodLocation =
-                nil;
-
-            self->_isTracking =
-                YES;
-
-            /*
-             Skedoggle only requires location access while the user is
-             actively recording a walk. Do not request an upgrade to
-             Always. If permission has not yet been chosen, request
-             While Using the App.
-            */
             if (
                 status ==
                     kCLAuthorizationStatusNotDetermined
             ) {
+                self->_pendingStartResolve =
+                    [resolve copy];
+
+                self->_pendingStartReject =
+                    [reject copy];
+
                 SkedoggleAppendDebugLog(
                     @"NATIVE requesting While Using the App location permission"
                 );
@@ -662,22 +794,32 @@ RCT_REMAP_METHOD(
                     self->_locationManager
                         requestWhenInUseAuthorization
                 ];
+
+                return;
             }
 
-            [
-                self->_locationManager
-                    startUpdatingLocation
-            ];
+            if (
+                status ==
+                    kCLAuthorizationStatusAuthorizedAlways ||
+                status ==
+                    kCLAuthorizationStatusAuthorizedWhenInUse
+            ) {
+                [
+                    self
+                        beginLocationTrackingWithStatus:
+                            status
+                        resolver:
+                            resolve
+                ];
 
-            SkedoggleAppendDebugLog(
-                @"NATIVE startUpdatingLocation executed"
+                return;
+            }
+
+            reject(
+                @"location_permission_unavailable",
+                @"Location permission is not available.",
+                nil
             );
-
-            resolve(@{
-                @"started": @YES,
-                @"authorizationStatus":
-                    @(status)
-            });
         }
     );
 }
@@ -697,6 +839,19 @@ RCT_REMAP_METHOD(
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
+            if (self->_pendingStartReject) {
+                RCTPromiseRejectBlock pendingReject =
+                    self->_pendingStartReject;
+
+                [self clearPendingStartPromise];
+
+                pendingReject(
+                    @"location_start_cancelled",
+                    @"Location tracking was cancelled before permission was granted.",
+                    nil
+                );
+            }
+
             if (self->_locationManager) {
                 [
                     self->_locationManager
@@ -911,9 +1066,12 @@ RCT_REMAP_METHOD(
 {
     SkedoggleAppendDebugLog([
         NSString stringWithFormat:
-            @"NATIVE location permission changed status=%d tracking=%@",
+            @"NATIVE location permission changed status=%d tracking=%@ pending=%@",
             (int)status,
             self->_isTracking
+                ? @"YES"
+                : @"NO",
+            self->_pendingStartResolve
                 ? @"YES"
                 : @"NO"
     ]);
@@ -922,6 +1080,61 @@ RCT_REMAP_METHOD(
         @"Skedoggle location permission changed: %d",
         (int)status
     );
+
+    if (self->_pendingStartResolve) {
+        if (
+            status ==
+                kCLAuthorizationStatusAuthorizedAlways ||
+            status ==
+                kCLAuthorizationStatusAuthorizedWhenInUse
+        ) {
+            RCTPromiseResolveBlock pendingResolve =
+                self->_pendingStartResolve;
+
+            [self clearPendingStartPromise];
+
+            [
+                self
+                    beginLocationTrackingWithStatus:
+                        status
+                    resolver:
+                        pendingResolve
+            ];
+
+            return;
+        }
+
+        if (
+            status ==
+                kCLAuthorizationStatusDenied ||
+            status ==
+                kCLAuthorizationStatusRestricted
+        ) {
+            RCTPromiseRejectBlock pendingReject =
+                self->_pendingStartReject;
+
+            [self clearPendingStartPromise];
+
+            self->_isTracking =
+                NO;
+
+            if (pendingReject) {
+                pendingReject(
+                    @"location_permission_denied",
+                    @"Location permission has been denied or restricted.",
+                    nil
+                );
+            }
+
+            return;
+        }
+
+        /*
+         Ignore intermediate Not Determined callbacks while the iOS
+         permission sheet is still awaiting the user's choice.
+        */
+        return;
+    }
 
     if (!self->_isTracking) {
         return;
