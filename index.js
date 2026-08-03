@@ -9,6 +9,7 @@ import {
     AppState,
     Linking,
     NativeEventEmitter,
+    PermissionsAndroid,
     NativeModules,
     Platform,
     View,
@@ -25,6 +26,114 @@ const BRIDGE_SECRET =
     'sk-test-7d4b1e9c-83a2-4f61-b909-2f0c9eeb6a41';
 
 let installed = false;
+
+
+const ANDROID_NOTIFICATION_PERMISSION =
+    PermissionsAndroid
+        ?.PERMISSIONS
+        ?.POST_NOTIFICATIONS ||
+    'android.permission.POST_NOTIFICATIONS';
+
+const requestAndroidWalkPermissions =
+    async () => {
+        if (
+            Platform.OS !==
+                'android' ||
+            Number(
+                Platform.Version
+            ) < 23
+        ) {
+            return {
+                locationGranted:
+                    true,
+
+                fineLocationGranted:
+                    true,
+
+                coarseLocationGranted:
+                    true,
+
+                notificationsGranted:
+                    true,
+            };
+        }
+
+        const finePermission =
+            PermissionsAndroid
+                .PERMISSIONS
+                .ACCESS_FINE_LOCATION;
+
+        const coarsePermission =
+            PermissionsAndroid
+                .PERMISSIONS
+                .ACCESS_COARSE_LOCATION;
+
+        const locationResults =
+            await PermissionsAndroid
+                .requestMultiple([
+                    finePermission,
+                    coarsePermission,
+                ]);
+
+        const fineLocationGranted =
+            locationResults[
+                finePermission
+            ] ===
+            PermissionsAndroid
+                .RESULTS
+                .GRANTED;
+
+        const coarseLocationGranted =
+            locationResults[
+                coarsePermission
+            ] ===
+            PermissionsAndroid
+                .RESULTS
+                .GRANTED;
+
+        let notificationsGranted =
+            true;
+
+        if (
+            Number(
+                Platform.Version
+            ) >= 33
+        ) {
+            notificationsGranted =
+                await PermissionsAndroid
+                    .check(
+                        ANDROID_NOTIFICATION_PERMISSION
+                    );
+
+            if (
+                !notificationsGranted
+            ) {
+                const result =
+                    await PermissionsAndroid
+                        .request(
+                            ANDROID_NOTIFICATION_PERMISSION
+                        );
+
+                notificationsGranted =
+                    result ===
+                    PermissionsAndroid
+                        .RESULTS
+                        .GRANTED;
+            }
+        }
+
+        return {
+            locationGranted:
+                fineLocationGranted ||
+                coarseLocationGranted,
+
+            fineLocationGranted,
+
+            coarseLocationGranted,
+
+            notificationsGranted,
+        };
+    };
 
 const getPageUrl = (props) => {
     return (
@@ -116,32 +225,49 @@ const fetchCommand = async () => {
 const normaliseLocation = (
     location
 ) => {
+    let value =
+        location;
+
+    if (
+        typeof value ===
+        'string'
+    ) {
+        try {
+            value =
+                JSON.parse(
+                    value
+                );
+        } catch (error) {
+            return null;
+        }
+    }
+
     const point = {
         type:
             'location',
 
         lat:
             Number(
-                location?.lat ??
-                location?.latitude
+                value?.lat ??
+                value?.latitude
             ),
 
         lng:
             Number(
-                location?.lng ??
-                location?.longitude
+                value?.lng ??
+                value?.longitude
             ),
 
         accuracy:
             Number(
-                location?.accuracy ??
+                value?.accuracy ??
                 10
             ),
 
         ts:
             Number(
-                location?.ts ??
-                location?.timestamp ??
+                value?.ts ??
+                value?.timestamp ??
                 Date.now()
             ),
 
@@ -380,75 +506,196 @@ const WalkNativeSidecar = ({
                             );
                         }
 
+                        let androidPermissions =
+                            null;
+
+                        if (
+                            Platform.OS ===
+                            'android'
+                        ) {
+                            androidPermissions =
+                                await requestAndroidWalkPermissions();
+
+                            if (
+                                !androidPermissions
+                                    .locationGranted
+                            ) {
+                                trackingRef.current =
+                                    false;
+
+                                Alert.alert(
+                                    'Location permission needed',
+                                    [
+                                        'Skedoggle needs location access to record your walk.',
+                                        '',
+                                        'Tap Open Settings and allow location while using the app. For the best route, enable precise location.'
+                                    ].join('\n'),
+                                    [
+                                        {
+                                            text:
+                                                'Cancel',
+                                            style:
+                                                'cancel'
+                                        },
+                                        {
+                                            text:
+                                                'Open Settings',
+                                            onPress:
+                                                () => {
+                                                    Linking
+                                                        .openSettings();
+                                                }
+                                        }
+                                    ]
+                                );
+
+                                return;
+                            }
+                        }
+
                         const result =
                             await BuddybossCustomCode
                                 .startBackgroundTracking();
-
-                        const permissionStatus =
-                            Number(
-                                result?.authorizationStatus
-                            );
 
                         trackingRef.current =
                             true;
 
                         if (
-                            permissionStatus === 3
+                            Platform.OS ===
+                            'ios'
                         ) {
-                            Alert.alert(
-                                'Walk tracking started',
-                                [
-                                    'Background tracking is enabled.',
-                                    '',
-                                    'Your route will continue recording while your phone is locked.'
-                                ].join('\n')
-                            );
+                            const permissionStatus =
+                                Number(
+                                    result?.authorizationStatus
+                                );
+
+                            if (
+                                permissionStatus === 3
+                            ) {
+                                Alert.alert(
+                                    'Walk tracking started',
+                                    [
+                                        'Background tracking is enabled.',
+                                        '',
+                                        'Your route will continue recording while your phone is locked.'
+                                    ].join('\n')
+                                );
+                            } else {
+                                Alert.alert(
+                                    'Allow background tracking',
+                                    [
+                                        'To record your full walk while your phone is locked, Skedoggle needs Location Access set to Always.',
+                                        '',
+                                        'Tap Open Settings, then:',
+                                        '',
+                                        '1. Tap Location',
+                                        '2. Select Always',
+                                        '3. Make sure Precise Location is switched on',
+                                        '',
+                                        'Without this setting, tracking may stop when your screen locks.'
+                                    ].join('\n'),
+                                    [
+                                        {
+                                            text:
+                                                'Continue Anyway',
+                                            style:
+                                                'cancel'
+                                        },
+                                        {
+                                            text:
+                                                'Open Settings',
+                                            onPress:
+                                                () => {
+                                                    Linking
+                                                        .openSettings();
+                                                }
+                                        }
+                                    ]
+                                );
+                            }
+                        } else if (
+                            Platform.OS ===
+                            'android'
+                        ) {
+                            const preciseLocation =
+                                Boolean(
+                                    result
+                                        ?.fineLocationGranted ??
+                                    androidPermissions
+                                        ?.fineLocationGranted
+                                );
+
+                            const notificationsGranted =
+                                Boolean(
+                                    result
+                                        ?.notificationsGranted ??
+                                    androidPermissions
+                                        ?.notificationsGranted
+                                );
+
+                            if (
+                                preciseLocation &&
+                                notificationsGranted
+                            ) {
+                                Alert.alert(
+                                    'Walk tracking started',
+                                    [
+                                        'Background tracking is enabled.',
+                                        '',
+                                        'Keep the Skedoggle walk notification visible while your walk is active. Your route should continue recording when the screen is locked.'
+                                    ].join('\n')
+                                );
+                            } else {
+                                const messages = [
+                                    'Background tracking has started.'
+                                ];
+
+                                if (
+                                    !preciseLocation
+                                ) {
+                                    messages.push(
+                                        '',
+                                        'Android is using approximate location. For a more accurate route, open Settings and enable precise location for Skedoggle.'
+                                    );
+                                }
+
+                                if (
+                                    !notificationsGranted
+                                ) {
+                                    messages.push(
+                                        '',
+                                        'Notifications are disabled. Enable Skedoggle notifications so Android can clearly show that your walk is still being tracked.'
+                                    );
+                                }
+
+                                Alert.alert(
+                                    'Walk tracking started',
+                                    messages.join(
+                                        '\n'
+                                    ),
+                                    [
+                                        {
+                                            text:
+                                                'Continue',
+                                            style:
+                                                'cancel'
+                                        },
+                                        {
+                                            text:
+                                                'Open Settings',
+                                            onPress:
+                                                () => {
+                                                    Linking
+                                                        .openSettings();
+                                                }
+                                        }
+                                    ]
+                                );
+                            }
                         } else {
                             Alert.alert(
-                                'Allow background tracking',
-                                [
-                                    'To record your full walk while your phone is locked, Skedoggle needs Location Access set to Always.',
-                                    '',
-                                    'Tap Open Settings, then:',
-                                    '',
-                                    '1. Tap Location',
-                                    '2. Select Always',
-                                    '3. Make sure Precise Location is switched on',
-                                    '',
-                                    'Without this setting, tracking may stop when your screen locks.'
-                                ].join('\n'),
-                                [
-                                    {
-                                        text:
-                                            'Continue Anyway',
-                                        style:
-                                            'cancel'
-                                    },
-                                    {
-                                        text:
-                                            'Open Settings',
-                                        onPress:
-                                            async () => {
-                                                try {
-                                                    await Linking
-                                                        .openSettings();
-                                                } catch (
-                                                    error
-                                                ) {
-                                                    Alert.alert(
-                                                        'Open Settings',
-                                                        [
-                                                            'Please open iPhone Settings manually, then go to:',
-                                                            '',
-                                                            'Skedoggle → Location → Always',
-                                                            '',
-                                                            'Also make sure Precise Location is switched on.'
-                                                        ].join('\n')
-                                                    );
-                                                }
-                                            }
-                                    }
-                                ]
+                                'Walk tracking started',
+                                'Background tracking is enabled.'
                             );
                         }
 
@@ -556,8 +803,12 @@ const WalkNativeSidecar = ({
     useEffect(
         () => {
             if (
-                Platform.OS !==
-                    'ios' ||
+                (
+                    Platform.OS !==
+                        'ios' &&
+                    Platform.OS !==
+                        'android'
+                ) ||
                 !BuddybossCustomCode
             ) {
                 return undefined;
