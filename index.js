@@ -518,9 +518,13 @@ const WalkNativeSidecar = ({
                             ?.hasSeenWalkLocationIntro !==
                         'function'
                     ) {
+                        /*
+                         Fail open: show the explanation even if the
+                         native saved-preference method is unavailable.
+                        */
                         if (!cancelled) {
                             setWalkIntroState(
-                                'hidden'
+                                'visible'
                             );
                         }
 
@@ -540,9 +544,13 @@ const WalkNativeSidecar = ({
                             );
                         }
                     } catch (error) {
+                        /*
+                         Do not silently skip the location explanation
+                         if reading the saved preference fails.
+                        */
                         if (!cancelled) {
                             setWalkIntroState(
-                                'hidden'
+                                'visible'
                             );
                         }
                     }
@@ -1069,13 +1077,55 @@ const WalkNativeSidecar = ({
                             false;
                     }
                 } catch (error) {
-                    Alert.alert(
-                        'Native GPS Error',
+                    const errorCode =
                         String(
-                            error?.message ??
-                            error
-                        )
-                    );
+                            error?.code ||
+                            ''
+                        );
+
+                    if (
+                        errorCode ===
+                            'location_permission_denied' ||
+                        errorCode ===
+                            'location_permission_unavailable'
+                    ) {
+                        trackingRef.current =
+                            false;
+
+                        Alert.alert(
+                            'Location permission needed',
+                            [
+                                'Skedoggle needs location access to record your walk.',
+                                '',
+                                'Open Settings, select While Using the App, and make sure Precise Location is on.'
+                            ].join('\n'),
+                            [
+                                {
+                                    text:
+                                        'Cancel',
+                                    style:
+                                        'cancel'
+                                },
+                                {
+                                    text:
+                                        'Open Settings',
+                                    onPress:
+                                        () => {
+                                            Linking
+                                                .openSettings();
+                                        }
+                                }
+                            ]
+                        );
+                    } else {
+                        Alert.alert(
+                            'Native GPS Error',
+                            String(
+                                error?.message ??
+                                error
+                            )
+                        );
+                    }
                 } finally {
                     await acknowledgeCommand(
                         commandId
