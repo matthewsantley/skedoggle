@@ -29,10 +29,41 @@ const parseWebViewMessage = (event) => {
     }
 };
 
-const sendMessageIntoWebView = (payload) => {
+const preserveRef = (
+    originalRef,
+    webView
+) => {
+    try {
+        if (
+            typeof originalRef ===
+            'function'
+        ) {
+            originalRef(webView);
+            return;
+        }
+
+        if (
+            originalRef &&
+            typeof originalRef ===
+                'object'
+        ) {
+            originalRef.current =
+                webView;
+        }
+    } catch (error) {
+        /*
+         Do not prevent Skedoggle from retaining the WebView reference.
+        */
+    }
+};
+
+const sendMessageIntoWebView = (
+    payload
+) => {
     if (
         !currentWebView ||
-        typeof currentWebView.injectJavaScript !==
+        typeof currentWebView
+            .injectJavaScript !==
             'function'
     ) {
         return false;
@@ -45,8 +76,8 @@ const sendMessageIntoWebView = (payload) => {
                 : JSON.stringify(payload);
 
         /*
-         JSON.stringify is used again so the message is safely embedded
-         inside the JavaScript injected into the WebView.
+         Encode the JSON string safely before inserting it into
+         JavaScript executed inside the WebView.
         */
         const encodedMessage =
             JSON.stringify(message);
@@ -56,55 +87,23 @@ const sendMessageIntoWebView = (payload) => {
                 try {
                     var data = ${encodedMessage};
 
-                    var windowEvent;
+                    function dispatchMessage(target) {
+                        var event;
 
-                    try {
-                        windowEvent = new MessageEvent(
-                            'message',
-                            {
-                                data: data
-                            }
-                        );
-                    } catch (error) {
-                        windowEvent =
-                            document.createEvent(
-                                'MessageEvent'
-                            );
-
-                        windowEvent.initMessageEvent(
-                            'message',
-                            true,
-                            true,
-                            data,
-                            '',
-                            '',
-                            window,
-                            null
-                        );
-                    }
-
-                    window.dispatchEvent(
-                        windowEvent
-                    );
-
-                    var documentEvent;
-
-                    try {
-                        documentEvent =
-                            new MessageEvent(
+                        try {
+                            event = new MessageEvent(
                                 'message',
                                 {
                                     data: data
                                 }
                             );
-                    } catch (error) {
-                        documentEvent =
-                            document.createEvent(
-                                'MessageEvent'
-                            );
+                        } catch (error) {
+                            event =
+                                document.createEvent(
+                                    'MessageEvent'
+                                );
 
-                        documentEvent
-                            .initMessageEvent(
+                            event.initMessageEvent(
                                 'message',
                                 true,
                                 true,
@@ -114,13 +113,15 @@ const sendMessageIntoWebView = (payload) => {
                                 window,
                                 null
                             );
+                        }
+
+                        target.dispatchEvent(event);
                     }
 
-                    document.dispatchEvent(
-                        documentEvent
-                    );
+                    dispatchMessage(window);
+                    dispatchMessage(document);
                 } catch (error) {
-                    /* Ignore WebView dispatch errors. */
+                    /* Leave the point buffered for later replay. */
                 }
             })();
 
@@ -168,10 +169,9 @@ const forwardLocationToWebView =
 
         if (!sent) {
             /*
-             Do not acknowledge the point.
+             Do not acknowledge it.
 
-             It remains in the native buffer until the WebView becomes
-             available again.
+             The native module will keep it in persistent storage.
             */
             return false;
         }
@@ -231,17 +231,12 @@ const replayBufferedLocations =
                     );
 
                 if (!forwarded) {
-                    /*
-                     Stop replaying if the WebView is unavailable.
-
-                     Remaining points stay in native storage.
-                    */
                     break;
                 }
             }
         } catch (error) {
             /*
-             Points remain in native storage and can be retried later.
+             Any unacknowledged points remain in native storage.
             */
         } finally {
             replayInProgress = false;
@@ -257,7 +252,7 @@ const startNativeTracking =
         ) {
             Alert.alert(
                 'Skedoggle GPS',
-                'The native startBackgroundTracking method is unavailable.'
+                'The native background GPS method is unavailable.'
             );
 
             return;
@@ -303,16 +298,17 @@ const stopNativeTracking =
 
         try {
             /*
-             Try to forward buffered points before stopping.
-
-             Any points that cannot be forwarded remain safely stored
-             in the native buffer.
+             Replay before stopping while the walk page should still
+             be able to receive native points.
             */
             await replayBufferedLocations();
 
             await BuddybossCustomCode
                 .stopBackgroundTracking();
 
+            /*
+             Catch any point delivered during the stop operation.
+            */
             await replayBufferedLocations();
         } catch (error) {
             Alert.alert(
@@ -354,28 +350,6 @@ const handleWebViewMessage =
         }
     };
 
-const preserveOriginalRef = (
-    originalRef,
-    webView
-) => {
-    if (
-        typeof originalRef ===
-        'function'
-    ) {
-        originalRef(webView);
-        return;
-    }
-
-    if (
-        originalRef &&
-        typeof originalRef ===
-            'object'
-    ) {
-        originalRef.current =
-            webView;
-    }
-};
-
 export const applyCustomCode = (
     externalCodeSetup
 ) => {
@@ -404,87 +378,82 @@ export const applyCustomCode = (
     ) {
         Alert.alert(
             'Skedoggle GPS',
-            'BuddyBoss pageScreenHooksApi.setWebViewProps is unavailable.'
+            'BuddyBoss WebView hooks are unavailable.'
         );
 
         return;
     }
 
     /*
-     BuddyBoss exposes its current WebView properties here.
+     IMPORTANT:
 
-     Preserve those properties and add our own ref and onMessage
-     handlers.
+     BuddyBoss expects a FUNCTION here, not a plain props object.
+
+     PageScreen calls this function whenever it builds its WebView
+     properties.
     */
-    const existingWebViewProps =
-        pageScreenHooksApi
-            .webViewProps &&
-        typeof pageScreenHooksApi
-            .webViewProps ===
-            'object'
-            ? pageScreenHooksApi
-                  .webViewProps
-            : {};
-
-    const originalOnMessage =
-        existingWebViewProps
-            .onMessage;
-
-    const originalRef =
-        existingWebViewProps.ref;
-
     pageScreenHooksApi
-        .setWebViewProps({
-            ...existingWebViewProps,
+        .setWebViewProps(
+            (existingProps = {}) => {
+                const originalOnMessage =
+                    existingProps
+                        ?.onMessage;
 
-            ref: (webView) => {
-                currentWebView =
-                    webView;
+                const originalRef =
+                    existingProps
+                        ?.ref;
 
-                preserveOriginalRef(
-                    originalRef,
-                    webView
-                );
+                return {
+                    ...existingProps,
 
-                if (webView) {
-                    setTimeout(
-                        () => {
-                            replayBufferedLocations();
-                        },
-                        750
-                    );
-                }
-            },
+                    ref: (webView) => {
+                        currentWebView =
+                            webView;
 
-            onMessage: async (event) => {
-                /*
-                 Preserve any BuddyBoss message handler already attached
-                 to the WebView.
-                */
-                if (
-                    typeof originalOnMessage ===
-                    'function'
-                ) {
-                    try {
-                        originalOnMessage(
+                        preserveRef(
+                            originalRef,
+                            webView
+                        );
+
+                        if (webView) {
+                            setTimeout(
+                                () => {
+                                    replayBufferedLocations();
+                                },
+                                750
+                            );
+                        }
+                    },
+
+                    onMessage: async (
+                        event
+                    ) => {
+                        /*
+                         Keep any BuddyBoss message processing intact.
+                        */
+                        if (
+                            typeof originalOnMessage ===
+                            'function'
+                        ) {
+                            try {
+                                await originalOnMessage(
+                                    event
+                                );
+                            } catch (error) {
+                                /*
+                                 Continue to the Skedoggle handler.
+                                */
+                            }
+                        }
+
+                        await handleWebViewMessage(
                             event
                         );
-                    } catch (error) {
-                        /*
-                         Do not prevent the Skedoggle handler from running.
-                        */
-                    }
-                }
+                    },
+                };
+            }
+        );
 
-                await handleWebViewMessage(
-                    event
-                );
-            },
-        });
-
-    /*
-     Receive live native GPS points while React Native is awake.
-    */
     const locationEmitter =
         new NativeEventEmitter(
             BuddybossCustomCode
@@ -499,16 +468,12 @@ export const applyCustomCode = (
                 );
             } catch (error) {
                 /*
-                 The point remains in the native buffer.
+                 The location stays buffered natively.
                 */
             }
         }
     );
 
-    /*
-     Replay locations collected while the screen was locked or the app
-     was backgrounded.
-    */
     AppState.addEventListener(
         'change',
         (nextAppState) => {
@@ -526,9 +491,6 @@ export const applyCustomCode = (
         }
     );
 
-    /*
-     Replay any locations left from an interrupted previous session.
-    */
     setTimeout(
         () => {
             replayBufferedLocations();
