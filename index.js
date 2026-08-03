@@ -4,24 +4,10 @@ import {
     Platform,
 } from 'react-native';
 
-const { BuddybossCustomCode } = NativeModules;
+const { BuddybossCustomCode } =
+    NativeModules;
 
 let installed = false;
-
-const parseMessage = (event) => {
-    try {
-        const raw =
-            event?.nativeEvent?.data ??
-            event?.data ??
-            event;
-
-        return typeof raw === 'string'
-            ? JSON.parse(raw)
-            : raw;
-    } catch (error) {
-        return null;
-    }
-};
 
 export const applyCustomCode = (
     externalCodeSetup
@@ -37,8 +23,8 @@ export const applyCustomCode = (
         !BuddybossCustomCode
     ) {
         Alert.alert(
-            'Skedoggle Bridge Test',
-            'Native module unavailable.'
+            'Skedoggle GPS',
+            'The native GPS module is unavailable.'
         );
 
         return;
@@ -50,93 +36,101 @@ export const applyCustomCode = (
 
     if (
         typeof pageApi
-            ?.setWebViewProps !==
+            ?.setOnShouldStartLoadWithRequest !==
         'function'
     ) {
         Alert.alert(
-            'Skedoggle Bridge Test',
-            'setWebViewProps is unavailable.'
+            'Skedoggle GPS',
+            'The BuddyBoss navigation hook is unavailable.'
         );
 
         return;
     }
 
-    pageApi.setWebViewProps(
-        (existingProps = {}) => {
-            const originalOnMessage =
-                existingProps.onMessage;
+    pageApi
+        .setOnShouldStartLoadWithRequest(
+            (props) => {
+                const requestedUrl =
+                    props?.req?.url || '';
 
-            return {
-                ...existingProps,
-
-                onMessage: async (
-                    event
-                ) => {
-                    if (
-                        typeof originalOnMessage ===
-                        'function'
-                    ) {
-                        try {
-                            await originalOnMessage(
-                                event
-                            );
-                        } catch (error) {
-                            // Continue to our own handler.
-                        }
-                    }
-
-                    const message =
-                        parseMessage(event);
-
-                    Alert.alert(
-                        'WebView Message Received',
-                        JSON.stringify(
-                            message ?? {
-                                raw:
-                                    event
-                                        ?.nativeEvent
-                                        ?.data ??
-                                    '(none)',
-                            },
-                            null,
-                            2
-                        )
-                    );
-
-                    if (
-                        message?.action ===
-                        'startTracking'
-                    ) {
-                        try {
-                            const result =
-                                await BuddybossCustomCode
-                                    .startBackgroundTracking();
-
+                if (
+                    requestedUrl ===
+                    'skedoggle://start-tracking' ||
+                    requestedUrl.startsWith(
+                        'skedoggle://start-tracking/'
+                    )
+                ) {
+                    BuddybossCustomCode
+                        .startBackgroundTracking()
+                        .then((result) => {
                             Alert.alert(
                                 'Native GPS Started',
-                                `Permission status: ${
-                                    result
-                                        ?.authorizationStatus ??
-                                    'unknown'
-                                }`
+                                [
+                                    'The website command reached the native app.',
+                                    '',
+                                    `Permission status: ${
+                                        result
+                                            ?.authorizationStatus ??
+                                        'unknown'
+                                    }`,
+                                ].join('\n')
                             );
-                        } catch (error) {
+                        })
+                        .catch((error) => {
                             Alert.alert(
                                 'Native GPS Error',
                                 String(
-                                    error?.message ??
+                                    error
+                                        ?.message ??
                                     error
                                 )
                             );
-                        }
-                    }
-                },
-            };
-        }
-    );
+                        });
+
+                    /*
+                     Cancel navigation so the walk-tracker page remains open.
+                    */
+                    return false;
+                }
+
+                if (
+                    requestedUrl ===
+                    'skedoggle://stop-tracking' ||
+                    requestedUrl.startsWith(
+                        'skedoggle://stop-tracking/'
+                    )
+                ) {
+                    BuddybossCustomCode
+                        .stopBackgroundTracking()
+                        .then(() => {
+                            Alert.alert(
+                                'Native GPS Stopped',
+                                'The native tracker was stopped.'
+                            );
+                        })
+                        .catch((error) => {
+                            Alert.alert(
+                                'Native GPS Error',
+                                String(
+                                    error
+                                        ?.message ??
+                                    error
+                                )
+                            );
+                        });
+
+                    return false;
+                }
+
+                /*
+                 Allow every normal website request.
+                */
+                return true;
+            }
+        );
 
     Alert.alert(
-        'Skedoggle Bridge Test',
-        'WebView message handler installed.'
+        'Skedoggle GPS',
+        'Native URL bridge installed.'
     );
 };
