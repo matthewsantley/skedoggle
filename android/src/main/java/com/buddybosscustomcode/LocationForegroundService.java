@@ -21,7 +21,6 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.ContextCompat;
 import androidx.core.app.NotificationCompat;
-import androidx.core.app.ServiceCompat;
 
 public class LocationForegroundService
         extends Service
@@ -168,12 +167,29 @@ public class LocationForegroundService
                             .FOREGROUND_SERVICE_TYPE_LOCATION;
         }
 
-        ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                foregroundServiceType
-        );
+        /*
+         Use the Android platform API directly.
+
+         ServiceCompat.startForeground(service, id, notification, type)
+         requires a recent AndroidX Core version. BuddyBoss projects can
+         contain an older AndroidX Core version, which causes a compile
+         failure even though the Java itself is otherwise valid.
+        */
+        if (Build.VERSION.SDK_INT
+                >= Build.VERSION_CODES.Q) {
+
+            startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    foregroundServiceType
+            );
+
+        } else {
+            startForeground(
+                    NOTIFICATION_ID,
+                    notification
+            );
+        }
 
         Log.i(
                 TAG,
@@ -312,10 +328,21 @@ public class LocationForegroundService
     private void stopTrackingService() {
         stopLocationUpdates();
 
-        ServiceCompat.stopForeground(
-                this,
-                ServiceCompat.STOP_FOREGROUND_REMOVE
-        );
+        /*
+         Use the platform stopForeground API for compatibility with
+         older AndroidX versions bundled by BuddyBoss.
+        */
+        if (Build.VERSION.SDK_INT
+                >= Build.VERSION_CODES.N) {
+
+            stopForeground(
+                    STOP_FOREGROUND_REMOVE
+            );
+
+        } else {
+            //noinspection deprecation
+            stopForeground(true);
+        }
 
         stopSelf();
 
