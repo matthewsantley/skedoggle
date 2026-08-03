@@ -1,94 +1,31 @@
+import React from 'react';
+
 import {
     Alert,
-    NativeModules,
     Platform,
 } from 'react-native';
 
-const { BuddybossCustomCode } =
-    NativeModules;
-
 let installed = false;
-let commandRunning = false;
-let lastCommandUrl = '';
+let shown = false;
 
-const isWalkTrackerUrl = (url) => {
-    return (
-        typeof url === 'string' &&
-        url.includes(
-            'skedoggle.com/track-walk'
-        )
-    );
-};
-
-const handleCommandUrl = async (url) => {
-    if (
-        typeof url !== 'string' ||
-        !url.includes(
-            '#skedoggle-native-'
-        )
-    ) {
-        return;
-    }
-
-    if (
-        url === lastCommandUrl ||
-        commandRunning
-    ) {
-        return;
-    }
-
-    lastCommandUrl = url;
-    commandRunning = true;
-
+const safeStringify = (value) => {
     try {
-        if (
-            url.includes(
-                '#skedoggle-native-start-'
-            )
-        ) {
-            const result =
-                await BuddybossCustomCode
-                    .startBackgroundTracking();
+        return JSON.stringify(
+            value,
+            (key, item) => {
+                if (
+                    typeof item ===
+                    'function'
+                ) {
+                    return '[function]';
+                }
 
-            Alert.alert(
-                'Native GPS Started',
-                [
-                    'The walk tracker reached the native GPS module.',
-                    '',
-                    `Permission status: ${
-                        result
-                            ?.authorizationStatus ??
-                        'unknown'
-                    }`,
-                ].join('\n')
-            );
-
-            return;
-        }
-
-        if (
-            url.includes(
-                '#skedoggle-native-stop-'
-            )
-        ) {
-            await BuddybossCustomCode
-                .stopBackgroundTracking();
-
-            Alert.alert(
-                'Native GPS Stopped',
-                'The native tracker was stopped.'
-            );
-        }
-    } catch (error) {
-        Alert.alert(
-            'Native GPS Error',
-            String(
-                error?.message ??
-                error
-            )
+                return item;
+            },
+            2
         );
-    } finally {
-        commandRunning = false;
+    } catch (error) {
+        return String(error);
     }
 };
 
@@ -101,15 +38,7 @@ export const applyCustomCode = (
 
     installed = true;
 
-    if (
-        Platform.OS !== 'ios' ||
-        !BuddybossCustomCode
-    ) {
-        Alert.alert(
-            'Skedoggle GPS',
-            'The native GPS module is unavailable.'
-        );
-
+    if (Platform.OS !== 'ios') {
         return;
     }
 
@@ -119,159 +48,92 @@ export const applyCustomCode = (
 
     if (
         typeof pageApi
-            ?.setWebViewProps !==
-            'function' ||
-        typeof pageApi
-            ?.setOnNavigationStateChange !==
-            'function'
+            ?.setPageComponent !==
+        'function'
     ) {
         Alert.alert(
-            'Skedoggle GPS',
-            'The required BuddyBoss PageScreen hooks are unavailable.'
+            'Skedoggle Page Test',
+            'setPageComponent is unavailable.'
         );
 
         return;
     }
 
-    /*
-     Inject the website-side bridge into the confirmed
-     /track-walk/ PageScreen WebView.
-    */
-    pageApi.setWebViewProps(
-        (pageInfo = {}) => {
+    pageApi.setPageComponent(
+        (props, DefaultComponent) => {
             const url =
-                pageInfo.url ||
-                pageInfo.source?.uri ||
-                '';
-
-            if (!isWalkTrackerUrl(url)) {
-                return {};
-            }
-
-            return {
-                injectedJavaScript: `
-                    (function () {
-                        if (
-                            window.__skedoggleNativeBridgeInstalled
-                        ) {
-                            return;
-                        }
-
-                        window.__skedoggleNativeBridgeInstalled =
-                            true;
-
-                        var originalPostMessage =
-                            window.ReactNativeWebView &&
-                            typeof window
-                                .ReactNativeWebView
-                                .postMessage ===
-                                'function'
-                                ? window
-                                      .ReactNativeWebView
-                                      .postMessage
-                                      .bind(
-                                          window
-                                              .ReactNativeWebView
-                                      )
-                                : null;
-
-                        function sendNativeCommand(
-                            command
-                        ) {
-                            window.location.hash =
-                                'skedoggle-native-' +
-                                command +
-                                '-' +
-                                Date.now();
-                        }
-
-                        if (
-                            window.ReactNativeWebView
-                        ) {
-                            window.ReactNativeWebView
-                                .postMessage =
-                                function(message) {
-                                    try {
-                                        var parsed =
-                                            typeof message ===
-                                                'string'
-                                                ? JSON.parse(
-                                                      message
-                                                  )
-                                                : message;
-
-                                        if (
-                                            parsed &&
-                                            parsed.action ===
-                                                'startTracking'
-                                        ) {
-                                            sendNativeCommand(
-                                                'start'
-                                            );
-                                        }
-
-                                        if (
-                                            parsed &&
-                                            parsed.action ===
-                                                'stopTracking'
-                                        ) {
-                                            sendNativeCommand(
-                                                'stop'
-                                            );
-                                        }
-                                    } catch (error) {
-                                        /*
-                                         Plain diagnostic messages are
-                                         deliberately ignored.
-                                        */
-                                    }
-
-                                    if (
-                                        originalPostMessage
-                                    ) {
-                                        try {
-                                            originalPostMessage(
-                                                message
-                                            );
-                                        } catch (error) {
-                                        }
-                                    }
-                                };
-                        }
-
-                        setTimeout(function () {
-                            alert(
-                                'Walk tracker native command bridge attached'
-                            );
-                        }, 750);
-                    })();
-
-                    true;
-                `,
-            };
-        }
-    );
-
-    /*
-     This is BuddyBoss's dedicated PageScreen navigation callback.
-     Do not place this inside setWebViewProps.
-    */
-    pageApi.setOnNavigationStateChange(
-        (navigationState = {}) => {
-            const url =
-                navigationState.url ||
+                props?.url ||
+                props?.route
+                    ?.params
+                    ?.url ||
+                props?.source
+                    ?.uri ||
                 '';
 
             if (
-                isWalkTrackerUrl(url)
+                typeof url ===
+                    'string' &&
+                url.includes(
+                    'skedoggle.com/track-walk'
+                ) &&
+                !shown
             ) {
-                handleCommandUrl(url);
+                shown = true;
+
+                setTimeout(
+                    () => {
+                        Alert.alert(
+                            'Track Walk Page Props',
+                            [
+                                'Property names:',
+                                Object.keys(
+                                    props || {}
+                                ).join(', '),
+                                '',
+                                'Selected values:',
+                                safeStringify({
+                                    url:
+                                        props
+                                            ?.url,
+                                    source:
+                                        props
+                                            ?.source,
+                                    route:
+                                        props
+                                            ?.route,
+                                    online:
+                                        props
+                                            ?.online,
+                                    index:
+                                        props
+                                            ?.index,
+                                    screenProps:
+                                        props
+                                            ?.screenProps,
+                                }),
+                            ].join('\n')
+                        );
+                    },
+                    1000
+                );
             }
+
+            /*
+             Render the normal BuddyBoss page unchanged.
+            */
+            return React.createElement(
+                DefaultComponent,
+                props
+            );
         }
     );
 
     Alert.alert(
-        'Skedoggle GPS',
-        'Corrected navigation bridge installed.'
+        'Skedoggle Page Test',
+        [
+            'Page renderer diagnostic installed.',
+            '',
+            'Open the walk tracker and wait a moment.',
+        ].join('\n')
     );
 };
