@@ -1,5 +1,5 @@
 import SkedogglePageComponent
-    from './components/SkedogglePageComponent';
+    from './ios/components/SkedogglePageComponent';
 
 let installed = false;
 
