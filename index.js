@@ -8,6 +8,7 @@ const { BuddybossCustomCode } =
     NativeModules;
 
 let installed = false;
+let commandRunning = false;
 let lastCommandUrl = '';
 
 const isWalkTrackerUrl = (url) => {
@@ -19,15 +20,9 @@ const isWalkTrackerUrl = (url) => {
     );
 };
 
-const processCommandUrl = async (url) => {
+const handleCommandUrl = async (url) => {
     if (
-        !url ||
-        url === lastCommandUrl
-    ) {
-        return;
-    }
-
-    if (
+        typeof url !== 'string' ||
         !url.includes(
             '#skedoggle-native-'
         )
@@ -35,14 +30,22 @@ const processCommandUrl = async (url) => {
         return;
     }
 
-    lastCommandUrl = url;
-
     if (
-        url.includes(
-            '#skedoggle-native-start-'
-        )
+        url === lastCommandUrl ||
+        commandRunning
     ) {
-        try {
+        return;
+    }
+
+    lastCommandUrl = url;
+    commandRunning = true;
+
+    try {
+        if (
+            url.includes(
+                '#skedoggle-native-start-'
+            )
+        ) {
             const result =
                 await BuddybossCustomCode
                     .startBackgroundTracking();
@@ -59,41 +62,33 @@ const processCommandUrl = async (url) => {
                     }`,
                 ].join('\n')
             );
-        } catch (error) {
-            Alert.alert(
-                'Native GPS Error',
-                String(
-                    error?.message ??
-                    error
-                )
-            );
+
+            return;
         }
 
-        return;
-    }
-
-    if (
-        url.includes(
-            '#skedoggle-native-stop-'
-        )
-    ) {
-        try {
+        if (
+            url.includes(
+                '#skedoggle-native-stop-'
+            )
+        ) {
             await BuddybossCustomCode
                 .stopBackgroundTracking();
 
             Alert.alert(
                 'Native GPS Stopped',
-                'The native background tracker was stopped.'
-            );
-        } catch (error) {
-            Alert.alert(
-                'Native GPS Error',
-                String(
-                    error?.message ??
-                    error
-                )
+                'The native tracker was stopped.'
             );
         }
+    } catch (error) {
+        Alert.alert(
+            'Native GPS Error',
+            String(
+                error?.message ??
+                error
+            )
+        );
+    } finally {
+        commandRunning = false;
     }
 };
 
@@ -125,16 +120,23 @@ export const applyCustomCode = (
     if (
         typeof pageApi
             ?.setWebViewProps !==
-        'function'
+            'function' ||
+        typeof pageApi
+            ?.setOnNavigationStateChange !==
+            'function'
     ) {
         Alert.alert(
             'Skedoggle GPS',
-            'BuddyBoss WebView properties are unavailable.'
+            'The required BuddyBoss PageScreen hooks are unavailable.'
         );
 
         return;
     }
 
+    /*
+     Inject the website-side bridge into the confirmed
+     /track-walk/ PageScreen WebView.
+    */
     pageApi.setWebViewProps(
         (pageInfo = {}) => {
             const url =
@@ -150,20 +152,20 @@ export const applyCustomCode = (
                 injectedJavaScript: `
                     (function () {
                         if (
-                            window
-                                .__skedoggleNativeBridgeInstalled
+                            window.__skedoggleNativeBridgeInstalled
                         ) {
                             return;
                         }
 
-                        window
-                            .__skedoggleNativeBridgeInstalled =
+                        window.__skedoggleNativeBridgeInstalled =
                             true;
 
                         var originalPostMessage =
                             window.ReactNativeWebView &&
-                            window.ReactNativeWebView
-                                .postMessage
+                            typeof window
+                                .ReactNativeWebView
+                                .postMessage ===
+                                'function'
                                 ? window
                                       .ReactNativeWebView
                                       .postMessage
@@ -173,7 +175,7 @@ export const applyCustomCode = (
                                       )
                                 : null;
 
-                        function sendCommandByUrl(
+                        function sendNativeCommand(
                             command
                         ) {
                             window.location.hash =
@@ -186,8 +188,7 @@ export const applyCustomCode = (
                         if (
                             window.ReactNativeWebView
                         ) {
-                            window
-                                .ReactNativeWebView
+                            window.ReactNativeWebView
                                 .postMessage =
                                 function(message) {
                                     try {
@@ -204,7 +205,7 @@ export const applyCustomCode = (
                                             parsed.action ===
                                                 'startTracking'
                                         ) {
-                                            sendCommandByUrl(
+                                            sendNativeCommand(
                                                 'start'
                                             );
                                         }
@@ -214,14 +215,14 @@ export const applyCustomCode = (
                                             parsed.action ===
                                                 'stopTracking'
                                         ) {
-                                            sendCommandByUrl(
+                                            sendNativeCommand(
                                                 'stop'
                                             );
                                         }
                                     } catch (error) {
                                         /*
-                                         Plain diagnostic messages can
-                                         safely be ignored here.
+                                         Plain diagnostic messages are
+                                         deliberately ignored.
                                         */
                                     }
 
@@ -247,24 +248,30 @@ export const applyCustomCode = (
 
                     true;
                 `,
-
-                onNavigationStateChange: (
-                    navigationState
-                ) => {
-                    const currentUrl =
-                        navigationState?.url ||
-                        '';
-
-                    processCommandUrl(
-                        currentUrl
-                    );
-                },
             };
+        }
+    );
+
+    /*
+     This is BuddyBoss's dedicated PageScreen navigation callback.
+     Do not place this inside setWebViewProps.
+    */
+    pageApi.setOnNavigationStateChange(
+        (navigationState = {}) => {
+            const url =
+                navigationState.url ||
+                '';
+
+            if (
+                isWalkTrackerUrl(url)
+            ) {
+                handleCommandUrl(url);
+            }
         }
     );
 
     Alert.alert(
         'Skedoggle GPS',
-        'Navigation command bridge installed.'
+        'Corrected navigation bridge installed.'
     );
 };
