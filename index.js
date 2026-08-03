@@ -1,18 +1,27 @@
 import React, {
+    useCallback,
     useEffect,
-    useMemo,
-    useState,
+    useRef,
 } from 'react';
 
 import {
-    ActivityIndicator,
-    StyleSheet,
-    Text,
+    Alert,
+    AppState,
+    NativeEventEmitter,
+    NativeModules,
+    Platform,
     View,
 } from 'react-native';
 
-import SkedogglePageComponent
-    from './ios/components/SkedogglePageComponent';
+const {
+    BuddybossCustomCode,
+} = NativeModules;
+
+const BRIDGE_URL =
+    'https://skedoggle.com/wp-json/skedoggle/v1/native-walk-bridge';
+
+const BRIDGE_SECRET =
+    'sk-test-7d4b1e9c-83a2-4f61-b909-2f0c9eeb6a41';
 
 let installed = false;
 
@@ -39,189 +48,562 @@ const isWalkTrackerUrl = (url) => {
     );
 };
 
-/*
- Search BuddyBoss's normal rendered page for the WebView source.
-
- The source may contain authentication headers or a special
- authenticated URL, so it is preferable to creating a new source
- using only https://skedoggle.com/track-walk/.
-*/
-const findWebViewSource = (
-    element,
-    depth = 0
+const postToBridge = async (
+    payload
 ) => {
+    const response = await fetch(
+        BRIDGE_URL,
+        {
+            method: 'POST',
+
+            headers: {
+                Accept:
+                    'application/json',
+
+                'Content-Type':
+                    'application/json',
+            },
+
+            body: JSON.stringify({
+                secret:
+                    BRIDGE_SECRET,
+
+                ...payload,
+            }),
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            `Bridge request failed: ${response.status}`
+        );
+    }
+
+    return response.json();
+};
+
+const fetchCommand = async () => {
+    const url =
+        BRIDGE_URL +
+        '?mode=command' +
+        '&secret=' +
+        encodeURIComponent(
+            BRIDGE_SECRET
+        ) +
+        '&_=' +
+        Date.now();
+
+    const response = await fetch(
+        url,
+        {
+            headers: {
+                Accept:
+                    'application/json',
+            },
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            `Command request failed: ${response.status}`
+        );
+    }
+
+    return response.json();
+};
+
+const normaliseLocation = (
+    location
+) => {
+    const point = {
+        type:
+            'location',
+
+        lat:
+            Number(
+                location?.lat ??
+                location?.latitude
+            ),
+
+        lng:
+            Number(
+                location?.lng ??
+                location?.longitude
+            ),
+
+        accuracy:
+            Number(
+                location?.accuracy ??
+                10
+            ),
+
+        ts:
+            Number(
+                location?.ts ??
+                location?.timestamp ??
+                Date.now()
+            ),
+
+        native:
+            true,
+    };
+
     if (
-        depth > 10 ||
-        !React.isValidElement(element)
+        !Number.isFinite(
+            point.lat
+        ) ||
+        !Number.isFinite(
+            point.lng
+        )
     ) {
         return null;
     }
 
-    const elementProps =
-        element.props || {};
-
-    if (
-        elementProps.source &&
-        typeof elementProps.source ===
-            'object' &&
-        typeof elementProps.source.uri ===
-            'string'
-    ) {
-        return elementProps.source;
-    }
-
-    if (
-        elementProps.webViewProps
-            ?.source &&
-        typeof elementProps
-            .webViewProps
-            .source === 'object' &&
-        typeof elementProps
-            .webViewProps
-            .source
-            .uri === 'string'
-    ) {
-        return elementProps
-            .webViewProps
-            .source;
-    }
-
-    const children =
-        React.Children.toArray(
-            elementProps.children
-        );
-
-    for (const child of children) {
-        const found =
-            findWebViewSource(
-                child,
-                depth + 1
-            );
-
-        if (found) {
-            return found;
-        }
-    }
-
-    return null;
+    return point;
 };
 
-const AuthenticatedWalkPage = ({
-    pageProps,
-    defaultElement,
+const WalkNativeSidecar = ({
+    defaultComponent,
 }) => {
-    const [sessionReady, setSessionReady] =
-        useState(false);
+    const lastCommandIdRef =
+        useRef('');
 
-    /*
-     Try to reuse BuddyBoss's own authenticated WebView source.
-    */
-    const buddyBossSource =
-        useMemo(
-            () =>
-                findWebViewSource(
-                    defaultElement
-                ),
-            [defaultElement]
+    const uploadRunningRef =
+        useRef(false);
+
+    const flushRunningRef =
+        useRef(false);
+
+    const trackingRef =
+        useRef(false);
+
+    const appStateRef =
+        useRef(
+            AppState.currentState
+        );
+
+    const acknowledgePoints =
+        useCallback(
+            async (points) => {
+                if (
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeLocation !==
+                        'function'
+                ) {
+                    return;
+                }
+
+                for (const point of points) {
+                    if (
+                        point?.ts == null
+                    ) {
+                        continue;
+                    }
+
+                    try {
+                        await BuddybossCustomCode
+                            .acknowledgeLocation(
+                                point.ts
+                            );
+                    } catch (error) {
+                        /*
+                         Unacknowledged points remain buffered.
+                        */
+                    }
+                }
+            },
+            []
+        );
+
+    const uploadPoints =
+        useCallback(
+            async (
+                rawPoints
+            ) => {
+                if (
+                    uploadRunningRef.current ||
+                    !Array.isArray(
+                        rawPoints
+                    ) ||
+                    rawPoints.length === 0
+                ) {
+                    return false;
+                }
+
+                const points =
+                    rawPoints
+                        .map(
+                            normaliseLocation
+                        )
+                        .filter(Boolean);
+
+                if (
+                    points.length === 0
+                ) {
+                    return false;
+                }
+
+                uploadRunningRef.current =
+                    true;
+
+                try {
+                    await postToBridge({
+                        action:
+                            'points',
+
+                        points,
+                    });
+
+                    await acknowledgePoints(
+                        points
+                    );
+
+                    return true;
+                } catch (error) {
+                    return false;
+                } finally {
+                    uploadRunningRef.current =
+                        false;
+                }
+            },
+            [
+                acknowledgePoints,
+            ]
+        );
+
+    const flushBufferedPoints =
+        useCallback(
+            async () => {
+                if (
+                    flushRunningRef.current ||
+                    typeof BuddybossCustomCode
+                        ?.getBufferedLocations !==
+                        'function'
+                ) {
+                    return;
+                }
+
+                flushRunningRef.current =
+                    true;
+
+                try {
+                    const buffered =
+                        await BuddybossCustomCode
+                            .getBufferedLocations();
+
+                    if (
+                        Array.isArray(
+                            buffered
+                        ) &&
+                        buffered.length > 0
+                    ) {
+                        await uploadPoints(
+                            buffered
+                        );
+                    }
+                } catch (error) {
+                    /*
+                     Native points remain buffered.
+                    */
+                } finally {
+                    flushRunningRef.current =
+                        false;
+                }
+            },
+            [
+                uploadPoints,
+            ]
+        );
+
+    const acknowledgeCommand =
+        useCallback(
+            async (
+                commandId
+            ) => {
+                try {
+                    await postToBridge({
+                        action:
+                            'ack_command',
+
+                        command_id:
+                            commandId,
+                    });
+                } catch (error) {
+                    // The next poll may see it again.
+                }
+            },
+            []
+        );
+
+    const processCommand =
+        useCallback(
+            async (
+                commandData
+            ) => {
+                const command =
+                    commandData
+                        ?.command;
+
+                const commandId =
+                    String(
+                        commandData
+                            ?.command_id ||
+                        ''
+                    );
+
+                if (
+                    !command ||
+                    !commandId ||
+                    commandId ===
+                        lastCommandIdRef
+                            .current
+                ) {
+                    return;
+                }
+
+                lastCommandIdRef.current =
+                    commandId;
+
+                try {
+                    if (
+                        command ===
+                        'start'
+                    ) {
+                        if (
+                            typeof BuddybossCustomCode
+                                ?.startBackgroundTracking !==
+                                'function'
+                        ) {
+                            throw new Error(
+                                'startBackgroundTracking is unavailable.'
+                            );
+                        }
+
+                        const result =
+                            await BuddybossCustomCode
+                                .startBackgroundTracking();
+
+                        trackingRef.current =
+                            true;
+
+                        Alert.alert(
+                            'Native GPS Started',
+                            [
+                                'The WordPress walk tracker reached the native module.',
+                                '',
+                                `Permission status: ${
+                                    result
+                                        ?.authorizationStatus ??
+                                    'unknown'
+                                }`,
+                            ].join(
+                                '\n'
+                            )
+                        );
+
+                        await flushBufferedPoints();
+                    }
+
+                    if (
+                        command ===
+                        'stop'
+                    ) {
+                        await flushBufferedPoints();
+
+                        if (
+                            typeof BuddybossCustomCode
+                                ?.stopBackgroundTracking ===
+                                'function'
+                        ) {
+                            await BuddybossCustomCode
+                                .stopBackgroundTracking();
+                        }
+
+                        await flushBufferedPoints();
+
+                        trackingRef.current =
+                            false;
+                    }
+                } catch (error) {
+                    Alert.alert(
+                        'Native GPS Error',
+                        String(
+                            error?.message ??
+                            error
+                        )
+                    );
+                } finally {
+                    await acknowledgeCommand(
+                        commandId
+                    );
+                }
+            },
+            [
+                acknowledgeCommand,
+                flushBufferedPoints,
+            ]
         );
 
     useEffect(
         () => {
-            /*
-             Keep BuddyBoss's normal page mounted long enough for its
-             authentication process to establish the website session.
-            */
-            const timer =
-                setTimeout(
-                    () => {
-                        setSessionReady(
-                            true
+            let cancelled = false;
+
+            const poll = async () => {
+                try {
+                    const command =
+                        await fetchCommand();
+
+                    if (!cancelled) {
+                        await processCommand(
+                            command
                         );
-                    },
-                    5000
+                    }
+                } catch (error) {
+                    /*
+                     A later poll will retry.
+                    */
+                }
+            };
+
+            poll();
+
+            const timer =
+                setInterval(
+                    poll,
+                    1000
                 );
 
             return () => {
-                clearTimeout(timer);
+                cancelled = true;
+                clearInterval(timer);
             };
         },
-        []
+        [
+            processCommand,
+        ]
+    );
+
+    useEffect(
+        () => {
+            const timer =
+                setInterval(
+                    () => {
+                        flushBufferedPoints();
+                    },
+                    2000
+                );
+
+            return () => {
+                clearInterval(timer);
+            };
+        },
+        [
+            flushBufferedPoints,
+        ]
+    );
+
+    useEffect(
+        () => {
+            if (
+                Platform.OS !==
+                    'ios' ||
+                !BuddybossCustomCode
+            ) {
+                return undefined;
+            }
+
+            let subscription = null;
+
+            try {
+                const emitter =
+                    new NativeEventEmitter(
+                        BuddybossCustomCode
+                    );
+
+                subscription =
+                    emitter.addListener(
+                        'SkedoggleLocation',
+                        (
+                            location
+                        ) => {
+                            uploadPoints([
+                                location,
+                            ]);
+                        }
+                    );
+            } catch (error) {
+                Alert.alert(
+                    'Native GPS Error',
+                    String(
+                        error?.message ??
+                        error
+                    )
+                );
+            }
+
+            return () => {
+                try {
+                    subscription
+                        ?.remove();
+                } catch (error) {
+                    // Ignore cleanup error.
+                }
+            };
+        },
+        [
+            uploadPoints,
+        ]
+    );
+
+    useEffect(
+        () => {
+            const subscription =
+                AppState.addEventListener(
+                    'change',
+                    (
+                        nextState
+                    ) => {
+                        const previous =
+                            appStateRef
+                                .current;
+
+                        appStateRef.current =
+                            nextState;
+
+                        if (
+                            nextState ===
+                                'active' &&
+                            (
+                                previous ===
+                                    'background' ||
+                                previous ===
+                                    'inactive'
+                            )
+                        ) {
+                            setTimeout(
+                                flushBufferedPoints,
+                                750
+                            );
+                        }
+                    }
+                );
+
+            return () => {
+                subscription.remove();
+            };
+        },
+        [
+            flushBufferedPoints,
+        ]
     );
 
     return (
-        <View style={styles.container}>
-            {/*
-              BuddyBoss's original PageScreen remains mounted.
-
-              Before sessionReady it loads normally behind the
-              preparation overlay. Afterwards it is kept mounted
-              invisibly so its authenticated session remains active.
-            */}
-            <View
-                pointerEvents="none"
-                style={
-                    sessionReady
-                        ? styles.hiddenBuddyBossPage
-                        : styles.visibleBuddyBossPage
-                }
-            >
-                {React.isValidElement(
-                    defaultElement
-                )
-                    ? defaultElement
-                    : null}
-            </View>
-
-            {!sessionReady && (
-                <View
-                    style={
-                        styles.preparingOverlay
-                    }
-                >
-                    <ActivityIndicator
-                        size="large"
-                    />
-
-                    <Text
-                        style={
-                            styles.preparingTitle
-                        }
-                    >
-                        Preparing walk tracker…
-                    </Text>
-
-                    <Text
-                        style={
-                            styles.preparingText
-                        }
-                    >
-                        Connecting your signed-in
-                        Skedoggle session.
-                    </Text>
-                </View>
-            )}
-
-            {sessionReady && (
-                <View
-                    style={
-                        styles.replacementPage
-                    }
-                >
-                    <SkedogglePageComponent
-                        {...pageProps}
-
-                        /*
-                         Prefer BuddyBoss's authenticated source when
-                         one was found. Otherwise the component uses
-                         its existing URL detection.
-                        */
-                        source={
-                            buddyBossSource ||
-                            pageProps?.source
-                        }
-                    />
-                </View>
-            )}
+        <View
+            style={{
+                flex: 1,
+            }}
+        >
+            {defaultComponent}
         </View>
     );
 };
@@ -249,13 +631,13 @@ export const applyCustomCode = (
     }
 
     pageApi.setPageComponent(
-        (props, Component) => {
+        (
+            props,
+            Component
+        ) => {
             const pageUrl =
                 getPageUrl(props);
 
-            /*
-             Leave every other BuddyBoss page completely unchanged.
-            */
             if (
                 !isWalkTrackerUrl(
                     pageUrl
@@ -264,77 +646,13 @@ export const applyCustomCode = (
                 return Component;
             }
 
-            /*
-             Return a real React element so hooks run within a proper
-             component lifecycle.
-            */
             return React.createElement(
-                AuthenticatedWalkPage,
+                WalkNativeSidecar,
                 {
-                    pageProps: props,
-                    defaultElement:
+                    defaultComponent:
                         Component,
                 }
             );
         }
     );
 };
-
-const styles =
-    StyleSheet.create({
-        container: {
-            flex: 1,
-            backgroundColor:
-                '#ffffff',
-        },
-
-        visibleBuddyBossPage: {
-            ...StyleSheet.absoluteFillObject,
-        },
-
-        hiddenBuddyBossPage: {
-            position:
-                'absolute',
-            width: 1,
-            height: 1,
-            left: -100,
-            top: -100,
-            opacity: 0,
-            overflow:
-                'hidden',
-        },
-
-        preparingOverlay: {
-            ...StyleSheet.absoluteFillObject,
-            alignItems:
-                'center',
-            justifyContent:
-                'center',
-            padding: 30,
-            backgroundColor:
-                '#ffffff',
-        },
-
-        preparingTitle: {
-            marginTop: 14,
-            fontSize: 17,
-            fontWeight:
-                '700',
-            textAlign:
-                'center',
-        },
-
-        preparingText: {
-            marginTop: 8,
-            fontSize: 14,
-            textAlign:
-                'center',
-            opacity: 0.65,
-        },
-
-        replacementPage: {
-            ...StyleSheet.absoluteFillObject,
-            backgroundColor:
-                '#ffffff',
-        },
-    });
