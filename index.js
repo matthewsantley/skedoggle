@@ -7,6 +7,7 @@ import React, {
 import {
     Alert,
     AppState,
+    Linking,
     NativeEventEmitter,
     NativeModules,
     Platform,
@@ -383,23 +384,73 @@ const WalkNativeSidecar = ({
                             await BuddybossCustomCode
                                 .startBackgroundTracking();
 
+                        const permissionStatus =
+                            Number(
+                                result?.authorizationStatus
+                            );
+
                         trackingRef.current =
                             true;
 
-                        Alert.alert(
-                            'Native GPS Started',
-                            [
-                                'The WordPress walk tracker reached the native module.',
-                                '',
-                                `Permission status: ${
-                                    result
-                                        ?.authorizationStatus ??
-                                    'unknown'
-                                }`,
-                            ].join(
-                                '\n'
-                            )
-                        );
+                        if (
+                            permissionStatus === 3
+                        ) {
+                            Alert.alert(
+                                'Walk tracking started',
+                                [
+                                    'Background tracking is enabled.',
+                                    '',
+                                    'Your route will continue recording while your phone is locked.'
+                                ].join('\n')
+                            );
+                        } else {
+                            Alert.alert(
+                                'Allow background tracking',
+                                [
+                                    'To record your full walk while your phone is locked, Skedoggle needs Location Access set to Always.',
+                                    '',
+                                    'Tap Open Settings, then:',
+                                    '',
+                                    '1. Tap Location',
+                                    '2. Select Always',
+                                    '3. Make sure Precise Location is switched on',
+                                    '',
+                                    'Without this setting, tracking may stop when your screen locks.'
+                                ].join('\n'),
+                                [
+                                    {
+                                        text:
+                                            'Continue Anyway',
+                                        style:
+                                            'cancel'
+                                    },
+                                    {
+                                        text:
+                                            'Open Settings',
+                                        onPress:
+                                            async () => {
+                                                try {
+                                                    await Linking
+                                                        .openSettings();
+                                                } catch (
+                                                    error
+                                                ) {
+                                                    Alert.alert(
+                                                        'Open Settings',
+                                                        [
+                                                            'Please open iPhone Settings manually, then go to:',
+                                                            '',
+                                                            'Skedoggle → Location → Always',
+                                                            '',
+                                                            'Also make sure Precise Location is switched on.'
+                                                        ].join('\n')
+                                                    );
+                                                }
+                                            }
+                                    }
+                                ]
+                            );
+                        }
 
                         await flushBufferedPoints();
                     }
