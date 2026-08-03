@@ -644,17 +644,23 @@ RCT_REMAP_METHOD(
             self->_isTracking =
                 YES;
 
+            /*
+             Skedoggle only requires location access while the user is
+             actively recording a walk. Do not request an upgrade to
+             Always. If permission has not yet been chosen, request
+             While Using the App.
+            */
             if (
-                status !=
-                    kCLAuthorizationStatusAuthorizedAlways
+                status ==
+                    kCLAuthorizationStatusNotDetermined
             ) {
                 SkedoggleAppendDebugLog(
-                    @"NATIVE requesting Always location permission"
+                    @"NATIVE requesting While Using the App location permission"
                 );
 
                 [
                     self->_locationManager
-                        requestAlwaysAuthorization
+                        requestWhenInUseAuthorization
                 ];
             }
 
