@@ -1,5 +1,3 @@
-import React from 'react';
-
 import {
     Alert,
     Platform,
@@ -60,7 +58,10 @@ export const applyCustomCode = (
     }
 
     pageApi.setPageComponent(
-        (props, DefaultComponent) => {
+        (
+            props,
+            componentValue
+        ) => {
             const url =
                 props?.url ||
                 props?.route
@@ -85,12 +86,24 @@ export const applyCustomCode = (
                         Alert.alert(
                             'Track Walk Page Props',
                             [
-                                'Property names:',
+                                'Props property names:',
                                 Object.keys(
                                     props || {}
                                 ).join(', '),
                                 '',
-                                'Selected values:',
+                                'Second argument type:',
+                                typeof componentValue,
+                                '',
+                                'Second argument keys:',
+                                componentValue &&
+                                typeof componentValue ===
+                                    'object'
+                                    ? Object.keys(
+                                          componentValue
+                                      ).join(', ')
+                                    : '(not an object)',
+                                '',
+                                'Selected props:',
                                 safeStringify({
                                     url:
                                         props
@@ -119,19 +132,18 @@ export const applyCustomCode = (
             }
 
             /*
-             Render the normal BuddyBoss page unchanged.
+             Return BuddyBoss's existing value unchanged.
+
+             Do not pass it to React.createElement.
             */
-            return React.createElement(
-                DefaultComponent,
-                props
-            );
+            return componentValue;
         }
     );
 
     Alert.alert(
         'Skedoggle Page Test',
         [
-            'Page renderer diagnostic installed.',
+            'Safe page diagnostic installed.',
             '',
             'Open the walk tracker and wait a moment.',
         ].join('\n')
