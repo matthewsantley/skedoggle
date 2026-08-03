@@ -569,35 +569,43 @@ const WalkNativeSidecar = ({
                                     result?.authorizationStatus
                                 );
 
-                            if (
-                                permissionStatus === 3
-                            ) {
+                            /*
+                             iOS permission values:
+                             3 = Always
+                             4 = While Using the App
+                            */
+                            const locationGranted =
+                                permissionStatus === 3 ||
+                                permissionStatus === 4;
+
+                            if (locationGranted) {
                                 Alert.alert(
                                     'Walk tracking started',
                                     [
-                                        'Background tracking is enabled.',
+                                        'Location tracking is active.',
                                         '',
-                                        'Your route will continue recording while your phone is locked.'
+                                        'You can lock your phone while recording your walk. Your route will update when Skedoggle becomes active again.',
+                                        '',
+                                        'For the most accurate route, make sure Precise Location is switched on.'
                                     ].join('\n')
                                 );
                             } else {
+                                trackingRef.current =
+                                    false;
+
                                 Alert.alert(
-                                    'Allow background tracking',
+                                    'Location permission needed',
                                     [
-                                        'To record your full walk while your phone is locked, Skedoggle needs Location Access set to Always.',
+                                        'Skedoggle needs location access to record your walk.',
                                         '',
-                                        'Tap Open Settings, then:',
+                                        'Tap Open Settings and select While Using the App.',
                                         '',
-                                        '1. Tap Location',
-                                        '2. Select Always',
-                                        '3. Make sure Precise Location is switched on',
-                                        '',
-                                        'Without this setting, tracking may stop when your screen locks.'
+                                        'For the most accurate route, make sure Precise Location is switched on.'
                                     ].join('\n'),
                                     [
                                         {
                                             text:
-                                                'Continue Anyway',
+                                                'Cancel',
                                             style:
                                                 'cancel'
                                         },
