@@ -737,20 +737,70 @@ const isSearchPartyUrl = (url) => {
     );
 };
 
-const isNewsFeedUrl = (url) => {
+const isDailyWoofUrl = (url) => {
     /*
-     BuddyBoss may expose the first screen as the WordPress slug
-     "news-feed" or as a route name such as "NewsFeed".
+     The first app page is labelled "Daily Woof", but BuddyBoss/WordPress
+     may expose it using several different references:
+
+       - daily-woof
+       - news-feed
+       - new-feed
+       - NewsFeed
+       - the Skedoggle site root (https://skedoggle.com)
+
+     The root match is deliberately restricted to the exact Skedoggle
+     homepage so other pages are not mistaken for Daily Woof.
     */
-    return (
+    const normalised =
+        normalisePageReference(
+            url
+        );
+
+    if (!normalised) {
+        return false;
+    }
+
+    if (
         pageReferenceMatches(
-            url,
+            normalised,
+            'daily-woof'
+        ) ||
+        pageReferenceMatches(
+            normalised,
             'news-feed'
         ) ||
         pageReferenceMatches(
-            url,
+            normalised,
+            'new-feed'
+        ) ||
+        pageReferenceMatches(
+            normalised,
             'newsfeed'
         )
+    ) {
+        return true;
+    }
+
+    const withoutQueryOrHash =
+        normalised
+            .split(/[?#]/)[0]
+            .replace(/\/+$/, '');
+
+    return (
+        withoutQueryOrHash ===
+            'https://skedoggle.com' ||
+        withoutQueryOrHash ===
+            'http://skedoggle.com' ||
+        withoutQueryOrHash ===
+            'https://www.skedoggle.com' ||
+        withoutQueryOrHash ===
+            'http://www.skedoggle.com' ||
+        withoutQueryOrHash ===
+            'skedoggle.com' ||
+        withoutQueryOrHash ===
+            'www.skedoggle.com' ||
+        withoutQueryOrHash ===
+            ''
     );
 };
 
@@ -3548,8 +3598,9 @@ export const applyCustomCode = (
              Track Walk and Search Party keep the same shared introduction
              as a fallback and also mount their native GPS sidecars.
 
-             The normal first-app screen, news-feed, shows the introduction
-             without starting GPS. Map pages are deliberately left untouched
+             The normal first-app screen, Daily Woof, shows the introduction
+             without starting GPS. BuddyBoss may expose it as a feed slug or as
+             the exact Skedoggle homepage. Map pages are deliberately left untouched
              so their existing WebView geolocation behaviour is not altered.
             */
             if (
@@ -3581,7 +3632,7 @@ export const applyCustomCode = (
             }
 
             if (
-                isNewsFeedUrl(
+                isDailyWoofUrl(
                     pageUrl
                 )
             ) {
