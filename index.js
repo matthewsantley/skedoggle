@@ -2537,6 +2537,30 @@ const SearchPartyNativeSidecar = ({
 
                                 return true;
                             }
+                        )
+                        .sort(
+                            (a, b) =>
+                                Number(a.ts || 0) -
+                                Number(b.ts || 0)
+                        )
+                        .filter(
+                            (point, index, sorted) => {
+                                if (index === 0) {
+                                    return true;
+                                }
+
+                                const previous =
+                                    sorted[index - 1];
+
+                                return !(
+                                    Number(previous.ts || 0) ===
+                                        Number(point.ts || 0) &&
+                                    Number(previous.lat) ===
+                                        Number(point.lat) &&
+                                    Number(previous.lng) ===
+                                        Number(point.lng)
+                                );
+                            }
                         );
 
                 if (points.length === 0) {
