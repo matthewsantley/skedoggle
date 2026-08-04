@@ -737,6 +737,23 @@ const isSearchPartyUrl = (url) => {
     );
 };
 
+const isNewsFeedUrl = (url) => {
+    /*
+     BuddyBoss may expose the first screen as the WordPress slug
+     "news-feed" or as a route name such as "NewsFeed".
+    */
+    return (
+        pageReferenceMatches(
+            url,
+            'news-feed'
+        ) ||
+        pageReferenceMatches(
+            url,
+            'newsfeed'
+        )
+    );
+};
+
 const isLocationMapUrl = (url) => {
     return (
         pageReferenceMatches(
@@ -3528,8 +3545,12 @@ export const applyCustomCode = (
                 getPageUrl(props);
 
             /*
-             Tracking pages must be matched before the general map-page
-             introduction. Their sidecars start native GPS and relay points.
+             Track Walk and Search Party keep the same shared introduction
+             as a fallback and also mount their native GPS sidecars.
+
+             The normal first-app screen, news-feed, shows the introduction
+             without starting GPS. Map pages are deliberately left untouched
+             so their existing WebView geolocation behaviour is not altered.
             */
             if (
                 isWalkTrackerUrl(
@@ -3560,8 +3581,8 @@ export const applyCustomCode = (
             }
 
             if (
-                isLocationMapPageProps(
-                    props
+                isNewsFeedUrl(
+                    pageUrl
                 )
             ) {
                 return React.createElement(
