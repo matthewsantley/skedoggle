@@ -10,6 +10,7 @@ import {
     Alert,
     AppState,
     Linking,
+    Modal,
     NativeEventEmitter,
     PermissionsAndroid,
     NativeModules,
@@ -1448,6 +1449,115 @@ const LocationIntroductionOnlySidecar = ({
         </View>
     );
 };
+
+
+const DailyWoofLocationIntroduction = () => {
+    const [introState, setIntroState] =
+        useState(
+            Platform.OS === 'ios'
+                ? 'checking'
+                : 'hidden'
+        );
+
+    useEffect(
+        () => {
+            let cancelled = false;
+
+            const checkSeen = async () => {
+                if (Platform.OS !== 'ios') {
+                    if (!cancelled) {
+                        setIntroState('hidden');
+                    }
+                    return;
+                }
+
+                if (
+                    typeof BuddybossCustomCode
+                        ?.hasSeenLocationIntro !==
+                    'function'
+                ) {
+                    if (!cancelled) {
+                        setIntroState('visible');
+                    }
+                    return;
+                }
+
+                try {
+                    const result =
+                        await BuddybossCustomCode
+                            .hasSeenLocationIntro();
+
+                    if (!cancelled) {
+                        setIntroState(
+                            result?.seen
+                                ? 'hidden'
+                                : 'visible'
+                        );
+                    }
+                } catch (error) {
+                    if (!cancelled) {
+                        setIntroState('visible');
+                    }
+                }
+            };
+
+            checkSeen();
+
+            return () => {
+                cancelled = true;
+            };
+        },
+        []
+    );
+
+    const continueToFeed =
+        useCallback(
+            async () => {
+                setIntroState('saving');
+
+                try {
+                    await markLocationIntroSeenShared();
+                } catch (error) {
+                    /*
+                     Never block access to Daily Woof if saving fails.
+                    */
+                } finally {
+                    setIntroState('hidden');
+                }
+            },
+            []
+        );
+
+    if (
+        Platform.OS !== 'ios' ||
+        introState === 'hidden'
+    ) {
+        return null;
+    }
+
+    return (
+        <Modal
+            animationType="fade"
+            transparent={false}
+            visible={true}
+            presentationStyle="fullScreen"
+            onRequestClose={() => {}}
+        >
+            <WalkLocationIntroduction
+                loading={
+                    introState === 'checking'
+                }
+                saving={
+                    introState === 'saving'
+                }
+                onContinue={
+                    continueToFeed
+                }
+            />
+        </Modal>
+    );
+};
+
 
 const WalkNativeSidecar = ({
     defaultComponent,
@@ -3573,6 +3683,28 @@ export const applyCustomCode = (
 
     installed = true;
 
+    /*
+     Daily Woof is BuddyBoss's native Activity Feed screen, not a WordPress
+     PageScreen. Register the one-time location introduction directly on the
+     Activity Feed. It renders as a full-screen native Modal and does not
+     request location permission.
+    */
+    const activitiesApi =
+        externalCodeSetup
+            ?.activitiesScreenApi;
+
+    if (
+        activitiesApi &&
+        typeof activitiesApi
+            .setActivityListHeaderComponent ===
+            'function'
+    ) {
+        activitiesApi
+            .setActivityListHeaderComponent(
+                DailyWoofLocationIntroduction
+            );
+    }
+
     const pageApi =
         externalCodeSetup
             ?.pageScreenHooksApi;
@@ -3598,9 +3730,9 @@ export const applyCustomCode = (
              Track Walk and Search Party keep the same shared introduction
              as a fallback and also mount their native GPS sidecars.
 
-             The normal first-app screen, Daily Woof, shows the introduction
-             without starting GPS. BuddyBoss may expose it as a feed slug or as
-             the exact Skedoggle homepage. Map pages are deliberately left untouched
+             Daily Woof is a native Activity Feed screen, so its introduction
+             is registered through activitiesScreenApi below rather than through
+             PageScreen URL matching. Map pages are deliberately left untouched
              so their existing WebView geolocation behaviour is not altered.
             */
             if (
@@ -3624,20 +3756,6 @@ export const applyCustomCode = (
             ) {
                 return React.createElement(
                     SearchPartyNativeSidecar,
-                    {
-                        defaultComponent:
-                            Component,
-                    }
-                );
-            }
-
-            if (
-                isDailyWoofUrl(
-                    pageUrl
-                )
-            ) {
-                return React.createElement(
-                    LocationIntroductionOnlySidecar,
                     {
                         defaultComponent:
                             Component,
