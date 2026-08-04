@@ -152,51 +152,121 @@ const requestAndroidWalkPermissions =
     };
 
 const getPageUrl = (props) => {
+    const candidates = [
+        props?.url,
+        props?.source?.uri,
+        props?.route?.params?.url,
+        props?.route?.params?.uri,
+        props?.route?.params?.path,
+        props?.route?.params?.slug,
+        props?.route?.params?.item?.link,
+        props?.route?.params?.item?.url,
+        props?.route?.params?.item?.path,
+        props?.route?.params?.item?.slug,
+        props?.item?.link,
+        props?.item?.url,
+        props?.item?.path,
+        props?.item?.slug,
+        props?.path,
+        props?.slug,
+        props?.screenId,
+        props?.route?.name,
+    ];
+
     return (
-        props?.url ||
-        props?.source?.uri ||
-        props?.route?.params?.url ||
-        props?.route?.params?.uri ||
-        props?.route?.params?.item?.link ||
-        props?.route?.params?.item?.url ||
-        props?.item?.link ||
-        props?.item?.url ||
+        candidates.find(
+            (candidate) =>
+                typeof candidate ===
+                    'string' &&
+                candidate.trim().length > 0
+        ) ||
         ''
     );
 };
 
-const isWalkTrackerUrl = (url) => {
-    return (
-        typeof url === 'string' &&
-        url.includes(
-            'skedoggle.com/track-walk'
-        )
-    );
+const normalisePageReference = (
+    value
+) => {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    let normalised = value;
+
+    try {
+        normalised =
+            decodeURIComponent(
+                normalised
+            );
+    } catch (error) {
+        /*
+         Keep the original value if it is not valid URI text.
+        */
+    }
+
+    return normalised
+        .trim()
+        .toLowerCase()
+        .replace(
+            /[\s_]+/g,
+            '-'
+        );
 };
 
-const isSearchPartyUrl = (url) => {
-    return (
-        typeof url === 'string' &&
-        url.includes(
-            'skedoggle.com/search-party'
-        )
-    );
-};
+const pageReferenceMatches = (
+    value,
+    slug
+) => {
+    const normalised =
+        normalisePageReference(
+            value
+        );
 
-const isLocationMapUrl = (url) => {
-    if (typeof url !== 'string') {
+    if (!normalised) {
         return false;
     }
 
     return (
-        url.includes(
-            'skedoggle.com/places-map'
+        normalised === slug ||
+        normalised.includes(
+            `/${slug}`
         ) ||
-        url.includes(
-            'skedoggle.com/services-map'
+        normalised.includes(
+            `${slug}/`
         ) ||
-        url.includes(
-            'skedoggle.com/lost-dogs-map'
+        normalised.includes(
+            slug
+        )
+    );
+};
+
+const isWalkTrackerUrl = (url) => {
+    return pageReferenceMatches(
+        url,
+        'track-walk'
+    );
+};
+
+const isSearchPartyUrl = (url) => {
+    return pageReferenceMatches(
+        url,
+        'search-party'
+    );
+};
+
+const isLocationMapUrl = (url) => {
+    return (
+        pageReferenceMatches(
+            url,
+            'places-map'
+        ) ||
+        pageReferenceMatches(
+            url,
+            'services-map'
+        ) ||
+        pageReferenceMatches(
+            url,
+            'lost-dogs-map'
         )
     );
 };
@@ -570,7 +640,7 @@ const LocationIntroductionOnlySidecar = ({
 
                     if (
                         typeof BuddybossCustomCode
-                            ?.hasSeenWalkLocationIntro !==
+                            ?.hasSeenLocationIntro !==
                         'function'
                     ) {
                         /*
@@ -589,7 +659,7 @@ const LocationIntroductionOnlySidecar = ({
                     try {
                         const result =
                             await BuddybossCustomCode
-                                .hasSeenWalkLocationIntro();
+                                .hasSeenLocationIntro();
 
                         if (!cancelled) {
                             setLocationIntroState(
@@ -631,15 +701,15 @@ const LocationIntroductionOnlySidecar = ({
                 try {
                     if (
                         typeof BuddybossCustomCode
-                            ?.markWalkLocationIntroSeen ===
+                            ?.markLocationIntroSeen ===
                         'function'
                     ) {
                         /*
                          The same one-time preference is shared by the
-                         maps, Walk Tracking and Search Parties.
+                         maps, map pages, Walk Tracking and Search Parties.
                         */
                         await BuddybossCustomCode
-                            .markWalkLocationIntroSeen();
+                            .markLocationIntroSeen();
                     }
                 } catch (error) {
                     /*
@@ -737,7 +807,7 @@ const WalkNativeSidecar = ({
 
                     if (
                         typeof BuddybossCustomCode
-                            ?.hasSeenWalkLocationIntro !==
+                            ?.hasSeenLocationIntro !==
                         'function'
                     ) {
                         /*
@@ -756,7 +826,7 @@ const WalkNativeSidecar = ({
                     try {
                         const result =
                             await BuddybossCustomCode
-                                .hasSeenWalkLocationIntro();
+                                .hasSeenLocationIntro();
 
                         if (!cancelled) {
                             setWalkIntroState(
@@ -798,11 +868,11 @@ const WalkNativeSidecar = ({
                 try {
                     if (
                         typeof BuddybossCustomCode
-                            ?.markWalkLocationIntroSeen ===
+                            ?.markLocationIntroSeen ===
                         'function'
                     ) {
                         await BuddybossCustomCode
-                            .markWalkLocationIntroSeen();
+                            .markLocationIntroSeen();
                     }
                 } catch (error) {
                     /*
@@ -1689,7 +1759,7 @@ const SearchPartyNativeSidecar = ({
 
                     if (
                         typeof BuddybossCustomCode
-                            ?.hasSeenWalkLocationIntro !==
+                            ?.hasSeenLocationIntro !==
                         'function'
                     ) {
                         /*
@@ -1708,7 +1778,7 @@ const SearchPartyNativeSidecar = ({
                     try {
                         const result =
                             await BuddybossCustomCode
-                                .hasSeenWalkLocationIntro();
+                                .hasSeenLocationIntro();
 
                         if (!cancelled) {
                             setLocationIntroState(
@@ -1750,17 +1820,17 @@ const SearchPartyNativeSidecar = ({
                 try {
                     if (
                         typeof BuddybossCustomCode
-                            ?.markWalkLocationIntroSeen ===
+                            ?.markLocationIntroSeen ===
                         'function'
                     ) {
                         /*
                          The existing native preference is deliberately
-                         shared by Walk Tracking and Search Parties. Once
+                         shared by map pages, Walk Tracking and Search Parties. Once
                          either screen is acknowledged, the introduction
                          is not shown again on the other feature.
                         */
                         await BuddybossCustomCode
-                            .markWalkLocationIntroSeen();
+                            .markLocationIntroSeen();
                     }
                 } catch (error) {
                     /*
