@@ -754,6 +754,107 @@ const isLocationMapUrl = (url) => {
     );
 };
 
+/*
+ BuddyBoss does not always expose a WordPress page URL in the same
+ property. Search the small page-screen props object as a fallback so
+ menu pages such as places-map are still recognised.
+*/
+const valueContainsPageReference = (
+    value,
+    slugs,
+    depth = 0,
+    visited = new Set()
+) => {
+    if (
+        value == null ||
+        depth > 5
+    ) {
+        return false;
+    }
+
+    if (
+        typeof value ===
+        'string'
+    ) {
+        return slugs.some(
+            (slug) =>
+                pageReferenceMatches(
+                    value,
+                    slug
+                )
+        );
+    }
+
+    if (
+        typeof value !==
+            'object' ||
+        visited.has(value)
+    ) {
+        return false;
+    }
+
+    visited.add(value);
+
+    const entries = Array.isArray(value)
+        ? value.map(
+            (entry, index) => [
+                String(index),
+                entry,
+            ]
+        )
+        : Object.entries(value);
+
+    return entries
+        .slice(0, 80)
+        .some(
+            ([key, entry]) =>
+                slugs.some(
+                    (slug) =>
+                        pageReferenceMatches(
+                            key,
+                            slug
+                        )
+                ) ||
+                valueContainsPageReference(
+                    entry,
+                    slugs,
+                    depth + 1,
+                    visited
+                )
+        );
+};
+
+const isLocationMapPageProps = (
+    props
+) => {
+    const slugs = [
+        'places-map',
+        'services-map',
+        'lost-dogs-map',
+        /* Backup entry points if opened directly. */
+        'places-near-me',
+        'services-near-me',
+        'lost-dogs-near-me',
+    ];
+
+    const pageUrl =
+        getPageUrl(props);
+
+    return (
+        slugs.some(
+            (slug) =>
+                pageReferenceMatches(
+                    pageUrl,
+                    slug
+                )
+        ) ||
+        valueContainsPageReference(
+            props,
+            slugs
+        )
+    );
+};
+
 const postToBridge = async (
     payload
 ) => {
@@ -3256,53 +3357,14 @@ export const applyCustomCode = (
                         webViewUrl
                     );
 
-                const locationMapPage =
-                    isLocationMapUrl(
-                        webViewUrl
-                    );
-
-                if (
-                    !searchPartyPage &&
-                    !locationMapPage
-                ) {
+                if (!searchPartyPage) {
                     return {};
                 }
 
-                const webViewProps = {
+                return {
                     onMessage:
                         (event) => {
-                            const rawData =
-                                event
-                                    ?.nativeEvent
-                                    ?.data;
-
-                            let message =
-                                rawData;
-
                             if (
-                                typeof rawData ===
-                                'string'
-                            ) {
-                                try {
-                                    message =
-                                        JSON.parse(
-                                            rawData
-                                        );
-                                } catch (error) {
-                                    message =
-                                        null;
-                                }
-                            }
-
-                            if (
-                                message?.action ===
-                                'markLocationIntroSeen'
-                            ) {
-                                markLocationIntroSeenShared();
-                            }
-
-                            if (
-                                searchPartyPage &&
                                 typeof searchPartyWebViewMessageHandler ===
                                 'function'
                             ) {
@@ -3312,14 +3374,6 @@ export const applyCustomCode = (
                             }
                         },
                 };
-
-                if (locationMapPage) {
-                    webViewProps
-                        .injectedJavaScriptBeforeContentLoaded =
-                            buildMapLocationIntroductionScript();
-                }
-
-                return webViewProps;
             }
         );
     }
@@ -3331,6 +3385,20 @@ export const applyCustomCode = (
         ) => {
             const pageUrl =
                 getPageUrl(props);
+
+            if (
+                isLocationMapPageProps(
+                    props
+                )
+            ) {
+                return React.createElement(
+                    LocationIntroductionOnlySidecar,
+                    {
+                        defaultComponent:
+                            Component,
+                    }
+                );
+            }
 
             if (
                 isWalkTrackerUrl(
