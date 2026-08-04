@@ -12,6 +12,13 @@ static NSString *const SkedoggleBufferedLocationsKey =
 static NSString *const SkedoggleWalkLocationIntroSeenKey =
     @"SkedoggleWalkLocationIntroSeenV1";
 
+/*
+ Shared one-time location introduction used by map pages,
+ Walk Tracking and Search Parties.
+*/
+static NSString *const SkedoggleLocationIntroSeenKey =
+    @"SkedoggleLocationIntroSeenV1";
+
 static NSString *const SkedoggleNativeSearchPositionURL =
     @"https://skedoggle.com/wp-json/skedoggle/v1/native-search-position";
 
@@ -329,7 +336,57 @@ RCT_REMAP_METHOD(
     });
 }
 
-#pragma mark - Walk location introduction
+#pragma mark - Shared location introduction
+
+RCT_REMAP_METHOD(
+    hasSeenLocationIntro,
+    hasSeenLocationIntroWithResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    BOOL seen = [
+        [NSUserDefaults standardUserDefaults]
+            boolForKey:
+                SkedoggleLocationIntroSeenKey
+    ];
+
+    resolve(@{
+        @"seen": @(seen)
+    });
+}
+
+RCT_REMAP_METHOD(
+    markLocationIntroSeen,
+    markLocationIntroSeenWithResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    [
+        [NSUserDefaults standardUserDefaults]
+            setBool:YES
+             forKey:
+                 SkedoggleLocationIntroSeenKey
+    ];
+
+    [
+        [NSUserDefaults standardUserDefaults]
+            synchronize
+    ];
+
+    SkedoggleAppendDebugLog(
+        @"NATIVE shared location introduction marked as seen"
+    );
+
+    resolve(@{
+        @"saved": @YES
+    });
+}
+
+#pragma mark - Legacy walk location introduction
 
 RCT_REMAP_METHOD(
     hasSeenWalkLocationIntro,
