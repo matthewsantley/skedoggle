@@ -1537,7 +1537,7 @@ const DailyWoofLocationIntroduction = () => {
 
     return (
         <Modal
-            animationType="fade"
+            animationType="none"
             transparent={false}
             visible={true}
             presentationStyle="fullScreen"
@@ -3696,24 +3696,34 @@ export const applyCustomCode = (
     if (
         activitiesApi &&
         typeof activitiesApi
-            .setActivitiesListProps ===
+            .setBeforeActivitySingleComponent ===
             'function'
     ) {
         /*
-         ActivitiesScreenHooksApi does not provide a dedicated
-         setActivityListHeaderComponent method. The supported hook is
-         setActivitiesListProps(), which can add normal FlatList props.
+         Do not use setActivitiesListProps({ ListHeaderComponent: ... }).
+         BuddyBoss already uses ListHeaderComponent for its create-post
+         composer, and replacing it removes the box at the top of Daily Woof.
 
-         Mount the introduction through ListHeaderComponent. The component
-         itself renders a full-screen native Modal, so it is visible above
-         Daily Woof without changing or replacing the activity list.
+         The supported BeforeActivitySingle hook adds our component without
+         replacing any existing Activity Feed controls. Render it only before
+         the first activity; the component itself opens a full-screen Modal.
         */
         activitiesApi
-            .setActivitiesListProps(
-                () => ({
-                    ListHeaderComponent:
-                        DailyWoofLocationIntroduction,
-                })
+            .setBeforeActivitySingleComponent(
+                ({
+                    index,
+                }) => {
+                    if (
+                        Number(index) !==
+                        0
+                    ) {
+                        return null;
+                    }
+
+                    return React.createElement(
+                        DailyWoofLocationIntroduction
+                    );
+                }
             );
     }
 
