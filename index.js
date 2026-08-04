@@ -1764,6 +1764,60 @@ const WalkNativeSidecar = ({
                                     point.trackingMode ===
                                         'walk'
                                 )
+                        )
+                        .sort(
+                            (first, second) =>
+                                Number(
+                                    first.ts ||
+                                    0
+                                ) -
+                                Number(
+                                    second.ts ||
+                                    0
+                                )
+                        )
+                        .filter(
+                            (
+                                point,
+                                index,
+                                ordered
+                            ) => {
+                                if (
+                                    index ===
+                                    0
+                                ) {
+                                    return true;
+                                }
+
+                                const previous =
+                                    ordered[
+                                        index -
+                                        1
+                                    ];
+
+                                return !(
+                                    Number(
+                                        previous.ts ||
+                                        0
+                                    ) ===
+                                        Number(
+                                            point.ts ||
+                                            0
+                                        ) &&
+                                    Number(
+                                        previous.lat
+                                    ) ===
+                                        Number(
+                                            point.lat
+                                        ) &&
+                                    Number(
+                                        previous.lng
+                                    ) ===
+                                        Number(
+                                            point.lng
+                                        )
+                                );
+                            }
                         );
 
                 if (
@@ -1963,6 +2017,14 @@ const WalkNativeSidecar = ({
                                 return;
                             }
                         }
+
+                        /*
+                         A prior WebView/app crash may have left accepted
+                         native points in the persistent buffer. Upload those
+                         before startBackgroundTracking() resets the current
+                         native session.
+                        */
+                        await flushBufferedPoints();
 
                         const result =
                             await BuddybossCustomCode
