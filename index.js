@@ -2083,9 +2083,16 @@ const SearchPartyNativeSidecar = ({
                         (location) => {
                             if (
                                 trackingRef.current &&
-                                credentialsRef.current &&
-                                !nativeDirectUploadRef.current
+                                credentialsRef.current
                             ) {
+                                /*
+                                 Forward native points immediately while the
+                                 React Native app is active. The Objective-C
+                                 module also uploads the same native points
+                                 directly so tracking continues while the
+                                 screen is locked. The Search Party endpoint
+                                 rejects duplicate timestamp/coordinate pairs.
+                                */
                                 uploadPoints([
                                     location,
                                 ]);
