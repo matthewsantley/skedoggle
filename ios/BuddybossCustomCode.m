@@ -4,12 +4,16 @@
 #import <React/RCTLog.h>
 #import <React/RCTRootView.h>
 #import <CoreLocation/CoreLocation.h>
+#import <math.h>
 
 static NSString *const SkedoggleBufferedLocationsKey =
     @"SkedoggleBufferedLocations";
 
 static NSString *const SkedoggleWalkLocationIntroSeenKey =
-    @"SkedoggleWalkLocationIntroSeenV2";
+    @"SkedoggleWalkLocationIntroSeenV1";
+
+static NSString *const SkedoggleNativeSearchPositionURL =
+    @"https://skedoggle.com/wp-json/skedoggle/v1/native-search-position";
 
 static NSString *SkedoggleDebugLogPath(void)
 {
@@ -173,6 +177,21 @@ static void SkedoggleAppendDebugLog(
     */
     RCTPromiseResolveBlock _pendingStartResolve;
     RCTPromiseRejectBlock _pendingStartReject;
+
+    /*
+     Identify what the current location session is recording.
+     Search Party points also carry the active Search Party ID.
+    */
+    NSString *_trackingMode;
+    NSNumber *_trackingSessionId;
+
+    NSNumber *_searchPartyUserId;
+    NSString *_searchPartyToken;
+
+    NSString *_pendingTrackingMode;
+    NSNumber *_pendingTrackingSessionId;
+    NSNumber *_pendingSearchPartyUserId;
+    NSString *_pendingSearchPartyToken;
 }
 
 RCT_EXPORT_MODULE()
@@ -415,6 +434,14 @@ RCT_REMAP_METHOD(
         _isTracking = NO;
         _lastGoodLocation = nil;
         _trackingStartedAt = nil;
+        _trackingMode = nil;
+        _trackingSessionId = nil;
+        _searchPartyUserId = nil;
+        _searchPartyToken = nil;
+        _pendingTrackingMode = nil;
+        _pendingTrackingSessionId = nil;
+        _pendingSearchPartyUserId = nil;
+        _pendingSearchPartyToken = nil;
 
         [self loadBufferedLocations];
         [self setupLocationManager];
@@ -641,6 +668,16 @@ RCT_REMAP_METHOD(
     return YES;
 }
 
+- (NSString *)normalisedTrackingMode:
+    (NSString *)mode
+{
+    if ([mode isEqualToString:@"search_party"]) {
+        return @"search_party";
+    }
+
+    return @"walk";
+}
+
 - (NSDictionary *)trackingStartResultForStatus:
     (CLAuthorizationStatus)status
 {
@@ -649,7 +686,17 @@ RCT_REMAP_METHOD(
         @"authorizationStatus":
             @(status),
         @"preciseLocationEnabled":
-            @([self isPreciseLocationEnabled])
+            @([self isPreciseLocationEnabled]),
+        @"trackingMode":
+            self->_trackingMode ?: @"walk",
+        @"sessionId":
+            self->_trackingSessionId ?: @0,
+        @"nativeDirectUpload":
+            @(
+                [self->_trackingMode isEqualToString:@"search_party"] &&
+                [self->_searchPartyUserId integerValue] > 0 &&
+                self->_searchPartyToken.length > 0
+            )
     };
 }
 
@@ -657,14 +704,60 @@ RCT_REMAP_METHOD(
 {
     self->_pendingStartResolve = nil;
     self->_pendingStartReject = nil;
+    self->_pendingTrackingMode = nil;
+    self->_pendingTrackingSessionId = nil;
+    self->_pendingSearchPartyUserId = nil;
+    self->_pendingSearchPartyToken = nil;
 }
 
 - (void)beginLocationTrackingWithStatus:
         (CLAuthorizationStatus)status
+    mode:
+        (NSString *)mode
+    sessionId:
+        (NSNumber *)sessionId
+    userId:
+        (NSNumber *)userId
+    token:
+        (NSString *)token
     resolver:
         (RCTPromiseResolveBlock)resolve
 {
+    /*
+     Only one native location session can be active at once. Clearing the
+     old buffer here prevents points from a previous walk or Search Party
+     being sent to the newly started activity.
+    */
     [self clearBufferedLocations];
+
+    self->_trackingMode =
+        [self normalisedTrackingMode:mode];
+
+    if (
+        [self->_trackingMode
+            isEqualToString:@"search_party"] &&
+        [sessionId integerValue] > 0
+    ) {
+        self->_trackingSessionId =
+            @([sessionId integerValue]);
+    } else {
+        self->_trackingSessionId = nil;
+    }
+
+    if (
+        [self->_trackingMode isEqualToString:@"search_party"] &&
+        [userId integerValue] > 0 &&
+        token.length > 0
+    ) {
+        self->_searchPartyUserId =
+            @([userId integerValue]);
+
+        self->_searchPartyToken =
+            [token copy];
+    } else {
+        self->_searchPartyUserId = nil;
+        self->_searchPartyToken = nil;
+    }
 
     self->_trackingStartedAt =
         [NSDate date];
@@ -685,9 +778,14 @@ RCT_REMAP_METHOD(
 
     SkedoggleAppendDebugLog([
         NSString stringWithFormat:
-            @"NATIVE startUpdatingLocation executed status=%d precise=%@",
+            @"NATIVE startUpdatingLocation executed status=%d precise=%@ mode=%@ session=%@ direct=%@",
             (int)status,
             preciseLocationEnabled
+                ? @"YES"
+                : @"NO",
+            self->_trackingMode,
+            self->_trackingSessionId ?: @0,
+            self->_searchPartyToken.length > 0
                 ? @"YES"
                 : @"NO"
     ]);
@@ -699,23 +797,19 @@ RCT_REMAP_METHOD(
     );
 }
 
-RCT_REMAP_METHOD(
-    startBackgroundTracking,
-    startWithResolver:
+- (void)requestLocationTrackingForMode:
+        (NSString *)mode
+    sessionId:
+        (NSNumber *)sessionId
+    userId:
+        (NSNumber *)userId
+    token:
+        (NSString *)token
+    resolver:
         (RCTPromiseResolveBlock)resolve
-    withRejecter:
+    rejecter:
         (RCTPromiseRejectBlock)reject
-)
 {
-    SkedoggleAppendDebugLog(
-        @"NATIVE startBackgroundTracking called"
-    );
-
-    os_log(
-        OS_LOG_DEFAULT,
-        "SKEDOGGLE_NATIVE_START_BACKGROUND_TRACKING_CALLED"
-    );
-
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
@@ -747,14 +841,91 @@ RCT_REMAP_METHOD(
                 return;
             }
 
+            NSString *safeMode =
+                [self normalisedTrackingMode:mode];
+
+            NSNumber *safeSessionId = nil;
+
+            if ([safeMode isEqualToString:@"search_party"]) {
+                if ([sessionId integerValue] <= 0) {
+                    reject(
+                        @"invalid_search_party_session",
+                        @"A valid Search Party session ID is required.",
+                        nil
+                    );
+
+                    return;
+                }
+
+                safeSessionId =
+                    @([sessionId integerValue]);
+            }
+
+            NSNumber *safeUserId = nil;
+            NSString *safeToken = nil;
+
+            if (
+                [safeMode isEqualToString:@"search_party"] &&
+                [userId integerValue] > 0 &&
+                token.length > 0
+            ) {
+                safeUserId =
+                    @([userId integerValue]);
+
+                safeToken =
+                    [token copy];
+            }
+
+            if (self->_isTracking) {
+                BOOL sameMode =
+                    [self->_trackingMode
+                        isEqualToString:safeMode];
+
+                BOOL sameSession = YES;
+
+                if ([safeMode isEqualToString:@"search_party"]) {
+                    sameSession =
+                        [self->_trackingSessionId integerValue] ==
+                        [safeSessionId integerValue];
+                }
+
+                if (sameMode && sameSession) {
+                    if (
+                        [safeMode isEqualToString:@"search_party"] &&
+                        [safeUserId integerValue] > 0 &&
+                        safeToken.length > 0
+                    ) {
+                        self->_searchPartyUserId =
+                            safeUserId;
+
+                        self->_searchPartyToken =
+                            safeToken;
+                    }
+
+                    SkedoggleAppendDebugLog(
+                        @"NATIVE requested tracking session is already active"
+                    );
+
+                    resolve(
+                        [self
+                            trackingStartResultForStatus:
+                                self->_locationManager.authorizationStatus]
+                    );
+
+                    return;
+                }
+            }
+
             CLAuthorizationStatus status =
                 self->_locationManager
                     .authorizationStatus;
 
             SkedoggleAppendDebugLog([
                 NSString stringWithFormat:
-                    @"NATIVE start permission status=%d",
-                    (int)status
+                    @"NATIVE start permission status=%d mode=%@ session=%@",
+                    (int)status,
+                    safeMode,
+                    safeSessionId ?: @0
             ]);
 
             if (
@@ -786,6 +957,18 @@ RCT_REMAP_METHOD(
                 self->_pendingStartReject =
                     [reject copy];
 
+                self->_pendingTrackingMode =
+                    safeMode;
+
+                self->_pendingTrackingSessionId =
+                    safeSessionId;
+
+                self->_pendingSearchPartyUserId =
+                    safeUserId;
+
+                self->_pendingSearchPartyToken =
+                    safeToken;
+
                 SkedoggleAppendDebugLog(
                     @"NATIVE requesting While Using the App location permission"
                 );
@@ -808,6 +991,14 @@ RCT_REMAP_METHOD(
                     self
                         beginLocationTrackingWithStatus:
                             status
+                        mode:
+                            safeMode
+                        sessionId:
+                            safeSessionId
+                        userId:
+                            safeUserId
+                        token:
+                            safeToken
                         resolver:
                             resolve
                 ];
@@ -822,6 +1013,121 @@ RCT_REMAP_METHOD(
             );
         }
     );
+}
+
+RCT_REMAP_METHOD(
+    startBackgroundTracking,
+    startWithResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    SkedoggleAppendDebugLog(
+        @"NATIVE startBackgroundTracking called for walk"
+    );
+
+    os_log(
+        OS_LOG_DEFAULT,
+        "SKEDOGGLE_NATIVE_START_BACKGROUND_TRACKING_CALLED"
+    );
+
+    [
+        self
+            requestLocationTrackingForMode:
+                @"walk"
+            sessionId:
+                nil
+            userId:
+                nil
+            token:
+                nil
+            resolver:
+                resolve
+            rejecter:
+                reject
+    ];
+}
+
+RCT_REMAP_METHOD(
+    startBackgroundTrackingForMode,
+    startForMode:
+        (NSString *)mode
+    sessionId:
+        (nonnull NSNumber *)sessionId
+    withResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    SkedoggleAppendDebugLog([
+        NSString stringWithFormat:
+            @"NATIVE startBackgroundTrackingForMode called mode=%@ session=%@",
+            mode ?: @"(null)",
+            sessionId ?: @0
+    ]);
+
+    [
+        self
+            requestLocationTrackingForMode:
+                mode
+            sessionId:
+                sessionId
+            userId:
+                nil
+            token:
+                nil
+            resolver:
+                resolve
+            rejecter:
+                reject
+    ];
+}
+
+RCT_REMAP_METHOD(
+    startSearchPartyTracking,
+    startSearchPartyWithSessionId:
+        (nonnull NSNumber *)sessionId
+    userId:
+        (nonnull NSNumber *)userId
+    token:
+        (NSString *)token
+    withResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    if (
+        [sessionId integerValue] <= 0 ||
+        [userId integerValue] <= 0 ||
+        token.length == 0
+    ) {
+        reject(
+            @"invalid_search_party_credentials",
+            @"Search Party tracking credentials are incomplete.",
+            nil
+        );
+
+        return;
+    }
+
+    [
+        self
+            requestLocationTrackingForMode:
+                @"search_party"
+            sessionId:
+                sessionId
+            userId:
+                userId
+            token:
+                token
+            resolver:
+                resolve
+            rejecter:
+                reject
+    ];
 }
 
 RCT_REMAP_METHOD(
@@ -867,6 +1173,11 @@ RCT_REMAP_METHOD(
 
             self->_trackingStartedAt =
                 nil;
+
+            self->_trackingMode = nil;
+            self->_trackingSessionId = nil;
+            self->_searchPartyUserId = nil;
+            self->_searchPartyToken = nil;
 
             NSUInteger bufferedCount =
                 self->_bufferedLocations
@@ -1018,6 +1329,108 @@ RCT_REMAP_METHOD(
 }
 
 RCT_REMAP_METHOD(
+    acknowledgeLocationForMode,
+    acknowledgeLocationForModeWithTimestamp:
+        (nonnull NSNumber *)timestamp
+    mode:
+        (NSString *)mode
+    sessionId:
+        (nonnull NSNumber *)sessionId
+    withResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            if (!timestamp) {
+                reject(
+                    @"invalid_timestamp",
+                    @"A timestamp is required.",
+                    nil
+                );
+
+                return;
+            }
+
+            NSString *safeMode =
+                [self normalisedTrackingMode:mode];
+
+            NSInteger safeSessionId =
+                [sessionId integerValue];
+
+            double acknowledgedTimestamp =
+                [timestamp doubleValue];
+
+            NSIndexSet *indexesToRemove = [
+                self->_bufferedLocations
+                    indexesOfObjectsPassingTest:
+                        ^BOOL(
+                            NSDictionary *point,
+                            NSUInteger index,
+                            BOOL *stop
+                        ) {
+                            NSNumber *pointTimestamp =
+                                point[@"ts"];
+
+                            if (
+                                !pointTimestamp ||
+                                [pointTimestamp doubleValue] >
+                                    acknowledgedTimestamp
+                            ) {
+                                return NO;
+                            }
+
+                            NSString *pointMode =
+                                point[@"trackingMode"];
+
+                            if (!pointMode.length) {
+                                pointMode = @"walk";
+                            }
+
+                            if (![pointMode isEqualToString:safeMode]) {
+                                return NO;
+                            }
+
+                            if ([safeMode isEqualToString:@"search_party"]) {
+                                NSInteger pointSessionId =
+                                    [point[@"sessionId"] integerValue];
+
+                                return
+                                    pointSessionId ==
+                                    safeSessionId;
+                            }
+
+                            return YES;
+                        }
+            ];
+
+            NSUInteger removedCount =
+                indexesToRemove.count;
+
+            if (removedCount > 0) {
+                [
+                    self->_bufferedLocations
+                        removeObjectsAtIndexes:
+                            indexesToRemove
+                ];
+
+                [self saveBufferedLocations];
+            }
+
+            resolve(@{
+                @"acknowledged": @YES,
+                @"removed": @(removedCount),
+                @"remaining":
+                    @(self->_bufferedLocations.count)
+            });
+        }
+    );
+}
+
+RCT_REMAP_METHOD(
     clearBufferedLocations,
     clearBufferedLocationsWithResolver:
         (RCTPromiseResolveBlock)resolve
@@ -1091,12 +1504,32 @@ RCT_REMAP_METHOD(
             RCTPromiseResolveBlock pendingResolve =
                 self->_pendingStartResolve;
 
+            NSString *pendingMode =
+                self->_pendingTrackingMode ?: @"walk";
+
+            NSNumber *pendingSessionId =
+                self->_pendingTrackingSessionId;
+
+            NSNumber *pendingUserId =
+                self->_pendingSearchPartyUserId;
+
+            NSString *pendingToken =
+                self->_pendingSearchPartyToken;
+
             [self clearPendingStartPromise];
 
             [
                 self
                     beginLocationTrackingWithStatus:
                         status
+                    mode:
+                        pendingMode
+                    sessionId:
+                        pendingSessionId
+                    userId:
+                        pendingUserId
+                    token:
+                        pendingToken
                     resolver:
                         pendingResolve
             ];
@@ -1178,6 +1611,220 @@ RCT_REMAP_METHOD(
             @"Skedoggle tracking stopped because location permission was denied or restricted"
         );
     }
+}
+
+#pragma mark - Native Search Party upload
+
+- (void)removeBufferedSearchPartyPointWithTimestamp:
+        (NSNumber *)timestamp
+    sessionId:
+        (NSNumber *)sessionId
+{
+    if (!timestamp || !sessionId) {
+        return;
+    }
+
+    double targetTimestamp =
+        [timestamp doubleValue];
+
+    NSInteger targetSessionId =
+        [sessionId integerValue];
+
+    NSIndexSet *indexes = [
+        self->_bufferedLocations
+            indexesOfObjectsPassingTest:
+                ^BOOL(
+                    NSDictionary *point,
+                    NSUInteger index,
+                    BOOL *stop
+                ) {
+                    if (
+                        ![point[@"trackingMode"]
+                            isEqualToString:@"search_party"] ||
+                        [point[@"sessionId"] integerValue] !=
+                            targetSessionId
+                    ) {
+                        return NO;
+                    }
+
+                    double pointTimestamp =
+                        [point[@"ts"] doubleValue];
+
+                    if (
+                        fabs(
+                            pointTimestamp -
+                            targetTimestamp
+                        ) < 0.5
+                    ) {
+                        *stop = YES;
+                        return YES;
+                    }
+
+                    return NO;
+                }
+    ];
+
+    if (indexes.count > 0) {
+        [
+            self->_bufferedLocations
+                removeObjectsAtIndexes:
+                    indexes
+        ];
+
+        [self saveBufferedLocations];
+    }
+}
+
+- (void)uploadSearchPartyPayload:
+    (NSDictionary *)payload
+{
+    if (
+        !payload ||
+        ![self->_trackingMode
+            isEqualToString:@"search_party"] ||
+        [self->_trackingSessionId integerValue] <= 0 ||
+        [self->_searchPartyUserId integerValue] <= 0 ||
+        self->_searchPartyToken.length == 0
+    ) {
+        return;
+    }
+
+    NSNumber *sessionId =
+        self->_trackingSessionId;
+
+    NSNumber *userId =
+        self->_searchPartyUserId;
+
+    NSString *token =
+        [self->_searchPartyToken copy];
+
+    NSDictionary *body = @{
+        @"session_id": sessionId,
+        @"user_id": userId,
+        @"token": token,
+        @"lat": payload[@"lat"] ?: @0,
+        @"lng": payload[@"lng"] ?: @0,
+        @"accuracy": payload[@"accuracy"] ?: @0,
+        @"ts": payload[@"ts"] ?: @0
+    };
+
+    NSError *jsonError = nil;
+
+    NSData *jsonData = [
+        NSJSONSerialization
+            dataWithJSONObject:body
+                       options:0
+                         error:&jsonError
+    ];
+
+    if (!jsonData || jsonError) {
+        SkedoggleAppendDebugLog([
+            NSString stringWithFormat:
+                @"NATIVE search upload JSON error=%@",
+                jsonError.localizedDescription
+        ]);
+
+        return;
+    }
+
+    NSURL *url = [
+        NSURL URLWithString:
+            SkedoggleNativeSearchPositionURL
+    ];
+
+    if (!url) {
+        return;
+    }
+
+    NSMutableURLRequest *request = [
+        NSMutableURLRequest
+            requestWithURL:url
+    ];
+
+    request.HTTPMethod = @"POST";
+    request.HTTPBody = jsonData;
+    request.timeoutInterval = 20.0;
+
+    [
+        request
+            setValue:@"application/json"
+  forHTTPHeaderField:@"Content-Type"
+    ];
+
+    [
+        request
+            setValue:@"application/json"
+  forHTTPHeaderField:@"Accept"
+    ];
+
+    NSNumber *timestamp =
+        payload[@"ts"];
+
+    NSURLSessionDataTask *task = [
+        [NSURLSession sharedSession]
+            dataTaskWithRequest:request
+              completionHandler:
+                ^(
+                    NSData *data,
+                    NSURLResponse *response,
+                    NSError *error
+                ) {
+                    NSHTTPURLResponse *httpResponse =
+                        [response
+                            isKindOfClass:
+                                [NSHTTPURLResponse class]]
+                            ? (NSHTTPURLResponse *)response
+                            : nil;
+
+                    BOOL successful =
+                        !error &&
+                        httpResponse.statusCode >= 200 &&
+                        httpResponse.statusCode < 300;
+
+                    if (successful && data.length > 0) {
+                        NSDictionary *responseBody = [
+                            NSJSONSerialization
+                                JSONObjectWithData:data
+                                           options:0
+                                             error:nil
+                        ];
+
+                        if (
+                            [responseBody
+                                isKindOfClass:
+                                    [NSDictionary class]] &&
+                            responseBody[@"success"] &&
+                            ![responseBody[@"success"] boolValue]
+                        ) {
+                            successful = NO;
+                        }
+                    }
+
+                    if (successful) {
+                        dispatch_async(
+                            dispatch_get_main_queue(),
+                            ^{
+                                [
+                                    self
+                                        removeBufferedSearchPartyPointWithTimestamp:
+                                            timestamp
+                                        sessionId:
+                                            sessionId
+                                ];
+                            }
+                        );
+                    } else {
+                        SkedoggleAppendDebugLog([
+                            NSString stringWithFormat:
+                                @"NATIVE search upload failed status=%ld error=%@",
+                                (long)httpResponse.statusCode,
+                                error.localizedDescription ?: @"none"
+                        ]);
+                    }
+                }
+    ];
+
+    [task resume];
 }
 
 #pragma mark - Location updates
@@ -1344,6 +1991,12 @@ RCT_REMAP_METHOD(
             @"type":
                 @"location",
 
+            @"trackingMode":
+                self->_trackingMode ?: @"walk",
+
+            @"sessionId":
+                self->_trackingSessionId ?: @0,
+
             @"lat":
                 @(
                     location.coordinate
@@ -1386,6 +2039,13 @@ RCT_REMAP_METHOD(
     }
 
     [self addLocationToBuffer:payload];
+
+    if (
+        [self->_trackingMode
+            isEqualToString:@"search_party"]
+    ) {
+        [self uploadSearchPartyPayload:payload];
+    }
 
     [
         self
