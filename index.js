@@ -930,6 +930,37 @@ const fetchCommand = async () => {
     return response.json();
 };
 
+const fetchSearchPartyCommand = async () => {
+    const url =
+        BRIDGE_URL +
+        '?mode=command' +
+        '&tracking_mode=search_party' +
+        '&secret=' +
+        encodeURIComponent(
+            BRIDGE_SECRET
+        ) +
+        '&_=' +
+        Date.now();
+
+    const response = await fetch(
+        url,
+        {
+            headers: {
+                Accept:
+                    'application/json',
+            },
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            `Search Party command request failed: ${response.status}`
+        );
+    }
+
+    return response.json();
+};
+
 const normaliseLocation = (
     location
 ) => {
@@ -2308,6 +2339,9 @@ const SearchPartyNativeSidecar = ({
                 : 'hidden'
         );
 
+    const lastSearchCommandIdRef =
+        useRef('');
+
     const credentialsRef =
         useRef(null);
 
@@ -3046,6 +3080,116 @@ const SearchPartyNativeSidecar = ({
 
     useEffect(
         () => {
+            let cancelled = false;
+
+            const acknowledgeSearchCommand =
+                async (commandId) => {
+                    try {
+                        await postToBridge({
+                            action:
+                                'ack_command',
+
+                            tracking_mode:
+                                'search_party',
+
+                            command_id:
+                                commandId,
+                        });
+                    } catch (error) {
+                        /* The next poll can retry. */
+                    }
+                };
+
+            const processSearchCommand =
+                async (commandData) => {
+                    const command =
+                        commandData?.command;
+
+                    const commandId =
+                        String(
+                            commandData?.command_id ||
+                            ''
+                        );
+
+                    if (
+                        !command ||
+                        !commandId ||
+                        commandId ===
+                            lastSearchCommandIdRef.current
+                    ) {
+                        return;
+                    }
+
+                    lastSearchCommandIdRef.current =
+                        commandId;
+
+                    try {
+                        if (command === 'start') {
+                            await startNativeSearchTracking({
+                                sessionId:
+                                    Number(
+                                        commandData?.session_id
+                                    ),
+
+                                userId:
+                                    Number(
+                                        commandData?.user_id
+                                    ),
+
+                                token:
+                                    String(
+                                        commandData?.token ||
+                                        ''
+                                    ),
+                            });
+                        }
+
+                        if (command === 'stop') {
+                            await stopNativeSearchTracking();
+                        }
+                    } finally {
+                        await acknowledgeSearchCommand(
+                            commandId
+                        );
+                    }
+                };
+
+            const poll = async () => {
+                try {
+                    const command =
+                        await fetchSearchPartyCommand();
+
+                    if (!cancelled) {
+                        await processSearchCommand(
+                            command
+                        );
+                    }
+                } catch (error) {
+                    /* A later poll retries. */
+                }
+            };
+
+            poll();
+
+            const timer =
+                setInterval(
+                    poll,
+                    1000
+                );
+
+            return () => {
+                cancelled = true;
+                clearInterval(timer);
+            };
+        },
+        [
+            startNativeSearchTracking,
+            stopNativeSearchTracking,
+        ]
+    );
+
+    useEffect(
+        () => {
             if (
                 (
                     Platform.OS !==
@@ -3373,44 +3517,6 @@ export const applyCustomCode = (
             'function'
     ) {
         return;
-    }
-
-    if (
-        typeof pageApi
-            .setWebViewProps ===
-        'function'
-    ) {
-        pageApi.setWebViewProps(
-            (webViewContext) => {
-                const webViewUrl =
-                    getPageUrl(
-                        webViewContext
-                    );
-
-                const searchPartyPage =
-                    isSearchPartyUrl(
-                        webViewUrl
-                    );
-
-                if (!searchPartyPage) {
-                    return {};
-                }
-
-                return {
-                    onMessage:
-                        (event) => {
-                            if (
-                                typeof searchPartyWebViewMessageHandler ===
-                                'function'
-                            ) {
-                                searchPartyWebViewMessageHandler(
-                                    event
-                                );
-                            }
-                        },
-                };
-            }
-        );
     }
 
     pageApi.setPageComponent(
