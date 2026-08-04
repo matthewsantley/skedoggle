@@ -3696,12 +3696,24 @@ export const applyCustomCode = (
     if (
         activitiesApi &&
         typeof activitiesApi
-            .setActivityListHeaderComponent ===
+            .setActivitiesListProps ===
             'function'
     ) {
+        /*
+         ActivitiesScreenHooksApi does not provide a dedicated
+         setActivityListHeaderComponent method. The supported hook is
+         setActivitiesListProps(), which can add normal FlatList props.
+
+         Mount the introduction through ListHeaderComponent. The component
+         itself renders a full-screen native Modal, so it is visible above
+         Daily Woof without changing or replacing the activity list.
+        */
         activitiesApi
-            .setActivityListHeaderComponent(
-                DailyWoofLocationIntroduction
+            .setActivitiesListProps(
+                () => ({
+                    ListHeaderComponent:
+                        DailyWoofLocationIntroduction,
+                })
             );
     }
 
