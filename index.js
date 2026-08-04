@@ -840,18 +840,29 @@ const isLocationMapPageProps = (
     const pageUrl =
         getPageUrl(props);
 
-    return (
-        slugs.some(
+    /*
+     When BuddyBoss supplies a current page URL, match only that URL.
+     Do not recursively scan the whole navigation object because it can
+     contain every menu item, causing Track Walk and Search Party to be
+     mistaken for map pages.
+    */
+    if (pageUrl) {
+        return slugs.some(
             (slug) =>
                 pageReferenceMatches(
                     pageUrl,
                     slug
                 )
-        ) ||
-        valueContainsPageReference(
-            props,
-            slugs
-        )
+        );
+    }
+
+    /*
+     Use the broader fallback only when BuddyBoss has not supplied any
+     usable current-page reference.
+    */
+    return valueContainsPageReference(
+        props,
+        slugs
     );
 };
 
@@ -3410,20 +3421,10 @@ export const applyCustomCode = (
             const pageUrl =
                 getPageUrl(props);
 
-            if (
-                isLocationMapPageProps(
-                    props
-                )
-            ) {
-                return React.createElement(
-                    LocationIntroductionOnlySidecar,
-                    {
-                        defaultComponent:
-                            Component,
-                    }
-                );
-            }
-
+            /*
+             Tracking pages must be matched before the general map-page
+             introduction. Their sidecars start native GPS and relay points.
+            */
             if (
                 isWalkTrackerUrl(
                     pageUrl
@@ -3445,6 +3446,20 @@ export const applyCustomCode = (
             ) {
                 return React.createElement(
                     SearchPartyNativeSidecar,
+                    {
+                        defaultComponent:
+                            Component,
+                    }
+                );
+            }
+
+            if (
+                isLocationMapPageProps(
+                    props
+                )
+            ) {
+                return React.createElement(
+                    LocationIntroductionOnlySidecar,
                     {
                         defaultComponent:
                             Component,
