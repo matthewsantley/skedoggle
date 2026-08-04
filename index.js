@@ -183,6 +183,24 @@ const isSearchPartyUrl = (url) => {
     );
 };
 
+const isLocationMapUrl = (url) => {
+    if (typeof url !== 'string') {
+        return false;
+    }
+
+    return (
+        url.includes(
+            'skedoggle.com/places-map'
+        ) ||
+        url.includes(
+            'skedoggle.com/services-map'
+        ) ||
+        url.includes(
+            'skedoggle.com/lost-dogs-map'
+        )
+    );
+};
+
 const postToBridge = async (
     payload
 ) => {
@@ -374,7 +392,7 @@ const WalkLocationIntroduction = ({
                         styles.introLead
                     }
                 >
-                    Skedoggle uses your location only when you choose to record a dog walk.
+                    Skedoggle uses your location when you choose to use a feature that needs it.
                 </Text>
 
                 <View
@@ -387,7 +405,51 @@ const WalkLocationIntroduction = ({
                             styles.introCardTitle
                         }
                     >
-                        Accurate routes
+                        Location-powered features
+                    </Text>
+
+                    <Text
+                        style={
+                            styles.introCardText
+                        }
+                    >
+                        {'• View dog-friendly places near you\n• Find pet services near you\n• View lost dogs near you\n• Map a dog walk\n• Join a lost-dog search party'}
+                    </Text>
+                </View>
+
+                <View
+                    style={
+                        styles.introCard
+                    }
+                >
+                    <Text
+                        style={
+                            styles.introCardTitle
+                        }
+                    >
+                        Search parties
+                    </Text>
+
+                    <Text
+                        style={
+                            styles.introCardText
+                        }
+                    >
+                        During a search party, your live position may be shown to other participants so everyone can coordinate and see which areas have been searched.
+                    </Text>
+                </View>
+
+                <View
+                    style={
+                        styles.introCard
+                    }
+                >
+                    <Text
+                        style={
+                            styles.introCardTitle
+                        }
+                    >
+                        Location settings
                     </Text>
 
                     <Text
@@ -409,28 +471,6 @@ const WalkLocationIntroduction = ({
                             styles.introCardTitle
                         }
                     >
-                        Lock your screen
-                    </Text>
-
-                    <Text
-                        style={
-                            styles.introCardText
-                        }
-                    >
-                        You can lock your phone while your walk is active. Skedoggle continues collecting your route and updates the map when the app becomes active again.
-                    </Text>
-                </View>
-
-                <View
-                    style={
-                        styles.introCard
-                    }
-                >
-                    <Text
-                        style={
-                            styles.introCardTitle
-                        }
-                    >
                         You stay in control
                     </Text>
 
@@ -439,7 +479,7 @@ const WalkLocationIntroduction = ({
                             styles.introCardText
                         }
                     >
-                        Walk tracking starts only when you press Start and stops when you end your walk.
+                        Skedoggle does not track your location unless you start a feature that needs it. Tracking stops when you end the walk or leave the search.
                     </Text>
                 </View>
 
@@ -480,7 +520,7 @@ const WalkLocationIntroduction = ({
                                     styles.introButtonText
                                 }
                             >
-                                Continue to walk tracking
+                                Continue
                             </Text>
                         )}
                     </TouchableOpacity>
@@ -495,6 +535,156 @@ const WalkLocationIntroduction = ({
                 </Text>
             </ScrollView>
         </SafeAreaView>
+    );
+};
+
+const LocationIntroductionOnlySidecar = ({
+    defaultComponent,
+}) => {
+    const [locationIntroState, setLocationIntroState] =
+        useState(
+            Platform.OS === 'ios'
+                ? 'checking'
+                : 'hidden'
+        );
+
+    useEffect(
+        () => {
+            let cancelled =
+                false;
+
+            const checkLocationIntroduction =
+                async () => {
+                    if (
+                        Platform.OS !==
+                        'ios'
+                    ) {
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                'hidden'
+                            );
+                        }
+
+                        return;
+                    }
+
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.hasSeenWalkLocationIntro !==
+                        'function'
+                    ) {
+                        /*
+                         Fail open: show the explanation even if the
+                         native saved-preference method is unavailable.
+                        */
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                'visible'
+                            );
+                        }
+
+                        return;
+                    }
+
+                    try {
+                        const result =
+                            await BuddybossCustomCode
+                                .hasSeenWalkLocationIntro();
+
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                result?.seen
+                                    ? 'hidden'
+                                    : 'visible'
+                            );
+                        }
+                    } catch (error) {
+                        /*
+                         Do not silently skip the explanation if the
+                         saved preference cannot be read.
+                        */
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                'visible'
+                            );
+                        }
+                    }
+                };
+
+            checkLocationIntroduction();
+
+            return () => {
+                cancelled =
+                    true;
+            };
+        },
+        []
+    );
+
+    const continueToLocationPage =
+        useCallback(
+            async () => {
+                setLocationIntroState(
+                    'saving'
+                );
+
+                try {
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.markWalkLocationIntroSeen ===
+                        'function'
+                    ) {
+                        /*
+                         The same one-time preference is shared by the
+                         maps, Walk Tracking and Search Parties.
+                        */
+                        await BuddybossCustomCode
+                            .markWalkLocationIntroSeen();
+                    }
+                } catch (error) {
+                    /*
+                     Do not prevent access to the map if saving fails.
+                    */
+                } finally {
+                    setLocationIntroState(
+                        'hidden'
+                    );
+                }
+            },
+            []
+        );
+
+    if (
+        Platform.OS ===
+            'ios' &&
+        locationIntroState !==
+            'hidden'
+    ) {
+        return (
+            <WalkLocationIntroduction
+                loading={
+                    locationIntroState ===
+                    'checking'
+                }
+                saving={
+                    locationIntroState ===
+                    'saving'
+                }
+                onContinue={
+                    continueToLocationPage
+                }
+            />
+        );
+    }
+
+    return (
+        <View
+            style={{
+                flex: 1,
+            }}
+        >
+            {defaultComponent}
+        </View>
     );
 };
 
@@ -1450,6 +1640,13 @@ const postSearchPartyPosition = async (
 const SearchPartyNativeSidecar = ({
     defaultComponent,
 }) => {
+    const [locationIntroState, setLocationIntroState] =
+        useState(
+            Platform.OS === 'ios'
+                ? 'checking'
+                : 'hidden'
+        );
+
     const credentialsRef =
         useRef(null);
 
@@ -1468,6 +1665,115 @@ const SearchPartyNativeSidecar = ({
     const appStateRef =
         useRef(
             AppState.currentState
+        );
+
+    useEffect(
+        () => {
+            let cancelled =
+                false;
+
+            const checkLocationIntroduction =
+                async () => {
+                    if (
+                        Platform.OS !==
+                        'ios'
+                    ) {
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                'hidden'
+                            );
+                        }
+
+                        return;
+                    }
+
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.hasSeenWalkLocationIntro !==
+                        'function'
+                    ) {
+                        /*
+                         Fail open: show the explanation even if the
+                         native saved-preference method is unavailable.
+                        */
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                'visible'
+                            );
+                        }
+
+                        return;
+                    }
+
+                    try {
+                        const result =
+                            await BuddybossCustomCode
+                                .hasSeenWalkLocationIntro();
+
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                result?.seen
+                                    ? 'hidden'
+                                    : 'visible'
+                            );
+                        }
+                    } catch (error) {
+                        /*
+                         Do not silently skip the location explanation
+                         if reading the saved preference fails.
+                        */
+                        if (!cancelled) {
+                            setLocationIntroState(
+                                'visible'
+                            );
+                        }
+                    }
+                };
+
+            checkLocationIntroduction();
+
+            return () => {
+                cancelled =
+                    true;
+            };
+        },
+        []
+    );
+
+    const continueToSearchParty =
+        useCallback(
+            async () => {
+                setLocationIntroState(
+                    'saving'
+                );
+
+                try {
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.markWalkLocationIntroSeen ===
+                        'function'
+                    ) {
+                        /*
+                         The existing native preference is deliberately
+                         shared by Walk Tracking and Search Parties. Once
+                         either screen is acknowledged, the introduction
+                         is not shown again on the other feature.
+                        */
+                        await BuddybossCustomCode
+                            .markWalkLocationIntroSeen();
+                    }
+                } catch (error) {
+                    /*
+                     Do not prevent access to the Search Party if saving
+                     the one-time preference fails.
+                    */
+                } finally {
+                    setLocationIntroState(
+                        'hidden'
+                    );
+                }
+            },
+            []
         );
 
     const acknowledgePoints =
@@ -2201,6 +2507,29 @@ const SearchPartyNativeSidecar = ({
         ]
     );
 
+    if (
+        Platform.OS ===
+            'ios' &&
+        locationIntroState !==
+            'hidden'
+    ) {
+        return (
+            <WalkLocationIntroduction
+                loading={
+                    locationIntroState ===
+                    'checking'
+                }
+                saving={
+                    locationIntroState ===
+                    'saving'
+                }
+                onContinue={
+                    continueToSearchParty
+                }
+            />
+        );
+    }
+
     return (
         <View
             style={{
@@ -2429,6 +2758,20 @@ export const applyCustomCode = (
             ) {
                 return React.createElement(
                     SearchPartyNativeSidecar,
+                    {
+                        defaultComponent:
+                            Component,
+                    }
+                );
+            }
+
+            if (
+                isLocationMapUrl(
+                    pageUrl
+                )
+            ) {
+                return React.createElement(
+                    LocationIntroductionOnlySidecar,
                     {
                         defaultComponent:
                             Component,
