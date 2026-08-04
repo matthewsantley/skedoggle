@@ -32,7 +32,16 @@ const BRIDGE_URL =
 const BRIDGE_SECRET =
     'sk-test-7d4b1e9c-83a2-4f61-b909-2f0c9eeb6a41';
 
+const SEARCH_PARTY_POSITION_URL =
+    'https://skedoggle.com/wp-json/skedoggle/v1/native-search-position';
+
 let installed = false;
+
+/*
+ The PageScreen WebView forwards Search Party messages to the currently
+ mounted SearchPartyNativeSidecar through this small shared callback.
+*/
+let searchPartyWebViewMessageHandler = null;
 
 
 const ANDROID_NOTIFICATION_PERMISSION =
@@ -165,6 +174,15 @@ const isWalkTrackerUrl = (url) => {
     );
 };
 
+const isSearchPartyUrl = (url) => {
+    return (
+        typeof url === 'string' &&
+        url.includes(
+            'skedoggle.com/search-party'
+        )
+    );
+};
+
 const postToBridge = async (
     payload
 ) => {
@@ -280,6 +298,20 @@ const normaliseLocation = (
 
         native:
             true,
+
+        trackingMode:
+            String(
+                value?.trackingMode ||
+                value?.tracking_mode ||
+                ''
+            ),
+
+        sessionId:
+            Number(
+                value?.sessionId ??
+                value?.session_id ??
+                0
+            ),
     };
 
     if (
@@ -518,9 +550,13 @@ const WalkNativeSidecar = ({
                             ?.hasSeenWalkLocationIntro !==
                         'function'
                     ) {
+                        /*
+                         Fail open: show the explanation even if the
+                         native saved-preference method is unavailable.
+                        */
                         if (!cancelled) {
                             setWalkIntroState(
-                                'hidden'
+                                'visible'
                             );
                         }
 
@@ -540,9 +576,13 @@ const WalkNativeSidecar = ({
                             );
                         }
                     } catch (error) {
+                        /*
+                         Do not silently skip the location explanation
+                         if reading the saved preference fails.
+                        */
                         if (!cancelled) {
                             setWalkIntroState(
-                                'hidden'
+                                'visible'
                             );
                         }
                     }
@@ -591,26 +631,42 @@ const WalkNativeSidecar = ({
     const acknowledgePoints =
         useCallback(
             async (points) => {
-                if (
+                const hasModeAwareAcknowledge =
                     typeof BuddybossCustomCode
-                        ?.acknowledgeLocation !==
-                        'function'
+                        ?.acknowledgeLocationForMode ===
+                    'function';
+
+                const hasLegacyAcknowledge =
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeLocation ===
+                    'function';
+
+                if (
+                    !hasModeAwareAcknowledge &&
+                    !hasLegacyAcknowledge
                 ) {
                     return;
                 }
 
                 for (const point of points) {
-                    if (
-                        point?.ts == null
-                    ) {
+                    if (point?.ts == null) {
                         continue;
                     }
 
                     try {
-                        await BuddybossCustomCode
-                            .acknowledgeLocation(
-                                point.ts
-                            );
+                        if (hasModeAwareAcknowledge) {
+                            await BuddybossCustomCode
+                                .acknowledgeLocationForMode(
+                                    point.ts,
+                                    'walk',
+                                    0
+                                );
+                        } else {
+                            await BuddybossCustomCode
+                                .acknowledgeLocation(
+                                    point.ts
+                                );
+                        }
                     } catch (error) {
                         /*
                          Unacknowledged points remain buffered.
@@ -641,7 +697,15 @@ const WalkNativeSidecar = ({
                         .map(
                             normaliseLocation
                         )
-                        .filter(Boolean);
+                        .filter(
+                            (point) =>
+                                point &&
+                                (
+                                    !point.trackingMode ||
+                                    point.trackingMode ===
+                                        'walk'
+                                )
+                        );
 
                 if (
                     points.length === 0
@@ -874,14 +938,10 @@ const WalkNativeSidecar = ({
                                 locationGranted &&
                                 preciseLocationEnabled
                             ) {
-                                Alert.alert(
-                                    'Walk tracking started',
-                                    [
-                                        'Your location is being recorded.',
-                                        '',
-                                        'You can lock your phone while your walk is active. Your route will update when Skedoggle becomes active again.'
-                                    ].join('\n')
-                                );
+                                /*
+                                 Tracking started successfully.
+                                 No alert is needed for the normal success case.
+                                */
                             } else if (
                                 locationGranted &&
                                 !preciseLocationEnabled
@@ -1069,13 +1129,55 @@ const WalkNativeSidecar = ({
                             false;
                     }
                 } catch (error) {
-                    Alert.alert(
-                        'Native GPS Error',
+                    const errorCode =
                         String(
-                            error?.message ??
-                            error
-                        )
-                    );
+                            error?.code ||
+                            ''
+                        );
+
+                    if (
+                        errorCode ===
+                            'location_permission_denied' ||
+                        errorCode ===
+                            'location_permission_unavailable'
+                    ) {
+                        trackingRef.current =
+                            false;
+
+                        Alert.alert(
+                            'Location permission needed',
+                            [
+                                'Skedoggle needs location access to record your walk.',
+                                '',
+                                'Open Settings, select While Using the App, and make sure Precise Location is on.'
+                            ].join('\n'),
+                            [
+                                {
+                                    text:
+                                        'Cancel',
+                                    style:
+                                        'cancel'
+                                },
+                                {
+                                    text:
+                                        'Open Settings',
+                                    onPress:
+                                        () => {
+                                            Linking
+                                                .openSettings();
+                                        }
+                                }
+                            ]
+                        );
+                    } else {
+                        Alert.alert(
+                            'Native GPS Error',
+                            String(
+                                error?.message ??
+                                error
+                            )
+                        );
+                    }
                 } finally {
                     await acknowledgeCommand(
                         commandId
@@ -1280,6 +1382,829 @@ const WalkNativeSidecar = ({
     );
 };
 
+
+const postSearchPartyPosition = async (
+    credentials,
+    point
+) => {
+    const response = await fetch(
+        SEARCH_PARTY_POSITION_URL,
+        {
+            method: 'POST',
+
+            headers: {
+                Accept:
+                    'application/json',
+
+                'Content-Type':
+                    'application/json',
+            },
+
+            body: JSON.stringify({
+                session_id:
+                    credentials.sessionId,
+
+                user_id:
+                    credentials.userId,
+
+                token:
+                    credentials.token,
+
+                lat:
+                    point.lat,
+
+                lng:
+                    point.lng,
+
+                accuracy:
+                    point.accuracy,
+
+                ts:
+                    point.ts,
+            }),
+        }
+    );
+
+    let data = null;
+
+    try {
+        data = await response.json();
+    } catch (error) {
+        data = null;
+    }
+
+    if (
+        !response.ok ||
+        data?.success === false
+    ) {
+        throw new Error(
+            data?.message ||
+            data?.data ||
+            `Search Party update failed: ${response.status}`
+        );
+    }
+
+    return data;
+};
+
+const SearchPartyNativeSidecar = ({
+    defaultComponent,
+}) => {
+    const credentialsRef =
+        useRef(null);
+
+    const trackingRef =
+        useRef(false);
+
+    const nativeDirectUploadRef =
+        useRef(false);
+
+    const uploadRunningRef =
+        useRef(false);
+
+    const flushRunningRef =
+        useRef(false);
+
+    const appStateRef =
+        useRef(
+            AppState.currentState
+        );
+
+    const acknowledgePoints =
+        useCallback(
+            async (
+                points,
+                sessionId
+            ) => {
+                const hasModeAwareAcknowledge =
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeLocationForMode ===
+                    'function';
+
+                const hasLegacyAcknowledge =
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeLocation ===
+                    'function';
+
+                if (
+                    !hasModeAwareAcknowledge &&
+                    !hasLegacyAcknowledge
+                ) {
+                    return;
+                }
+
+                for (const point of points) {
+                    if (point?.ts == null) {
+                        continue;
+                    }
+
+                    try {
+                        if (hasModeAwareAcknowledge) {
+                            await BuddybossCustomCode
+                                .acknowledgeLocationForMode(
+                                    point.ts,
+                                    'search_party',
+                                    sessionId
+                                );
+                        } else {
+                            await BuddybossCustomCode
+                                .acknowledgeLocation(
+                                    point.ts
+                                );
+                        }
+                    } catch (error) {
+                        /*
+                         The point stays in the native buffer and will
+                         be retried by the next flush.
+                        */
+                    }
+                }
+            },
+            []
+        );
+
+    const uploadPoints =
+        useCallback(
+            async (rawPoints) => {
+                const credentials =
+                    credentialsRef.current;
+
+                if (
+                    uploadRunningRef.current ||
+                    !credentials ||
+                    !Array.isArray(rawPoints) ||
+                    rawPoints.length === 0
+                ) {
+                    return false;
+                }
+
+                const points =
+                    rawPoints
+                        .map(
+                            normaliseLocation
+                        )
+                        .filter(
+                            (point) => {
+                                if (!point) {
+                                    return false;
+                                }
+
+                                if (
+                                    point.trackingMode &&
+                                    point.trackingMode !==
+                                        'search_party'
+                                ) {
+                                    return false;
+                                }
+
+                                /*
+                                 The current mode-aware native module tags
+                                 every point. Only accept untagged points as
+                                 a compatibility fallback for an older native
+                                 module, preventing an old walk buffer from
+                                 entering a Search Party.
+                                */
+                                if (
+                                    !point.trackingMode &&
+                                    typeof BuddybossCustomCode
+                                        ?.startBackgroundTrackingForMode ===
+                                        'function'
+                                ) {
+                                    return false;
+                                }
+
+                                if (
+                                    point.sessionId > 0 &&
+                                    point.sessionId !==
+                                        credentials.sessionId
+                                ) {
+                                    return false;
+                                }
+
+                                return true;
+                            }
+                        );
+
+                if (points.length === 0) {
+                    return false;
+                }
+
+                uploadRunningRef.current =
+                    true;
+
+                const uploaded = [];
+
+                try {
+                    for (const point of points) {
+                        await postSearchPartyPosition(
+                            credentials,
+                            point
+                        );
+
+                        uploaded.push(point);
+                    }
+
+                    if (uploaded.length > 0) {
+                        await acknowledgePoints(
+                            uploaded,
+                            credentials.sessionId
+                        );
+                    }
+
+                    return (
+                        uploaded.length ===
+                        points.length
+                    );
+                } catch (error) {
+                    if (uploaded.length > 0) {
+                        await acknowledgePoints(
+                            uploaded,
+                            credentials.sessionId
+                        );
+                    }
+
+                    return false;
+                } finally {
+                    uploadRunningRef.current =
+                        false;
+                }
+            },
+            [
+                acknowledgePoints,
+            ]
+        );
+
+    const flushBufferedPoints =
+        useCallback(
+            async () => {
+                if (
+                    flushRunningRef.current ||
+                    !credentialsRef.current ||
+                    typeof BuddybossCustomCode
+                        ?.getBufferedLocations !==
+                        'function'
+                ) {
+                    return;
+                }
+
+                flushRunningRef.current =
+                    true;
+
+                try {
+                    const buffered =
+                        await BuddybossCustomCode
+                            .getBufferedLocations();
+
+                    if (
+                        Array.isArray(buffered) &&
+                        buffered.length > 0
+                    ) {
+                        await uploadPoints(
+                            buffered
+                        );
+                    }
+                } catch (error) {
+                    /*
+                     Native Search Party points remain buffered.
+                    */
+                } finally {
+                    flushRunningRef.current =
+                        false;
+                }
+            },
+            [
+                uploadPoints,
+            ]
+        );
+
+    const stopNativeSearchTracking =
+        useCallback(
+            async () => {
+                await flushBufferedPoints();
+
+                try {
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.stopBackgroundTracking ===
+                        'function'
+                    ) {
+                        await BuddybossCustomCode
+                            .stopBackgroundTracking();
+                    }
+                } catch (error) {
+                    /*
+                     Keep the web page responsive even if native stop fails.
+                    */
+                }
+
+                await flushBufferedPoints();
+
+                trackingRef.current =
+                    false;
+
+                nativeDirectUploadRef.current =
+                    false;
+
+                credentialsRef.current =
+                    null;
+            },
+            [
+                flushBufferedPoints,
+            ]
+        );
+
+    const showSearchPermissionAlert =
+        useCallback(
+            () => {
+                Alert.alert(
+                    'Location permission needed',
+                    [
+                        'Skedoggle needs location access while you are helping with a Search Party.',
+                        '',
+                        'Open Settings, select While Using the App, and make sure Precise Location is on.'
+                    ].join('\n'),
+                    [
+                        {
+                            text:
+                                'Cancel',
+                            style:
+                                'cancel'
+                        },
+                        {
+                            text:
+                                'Open Settings',
+                            onPress:
+                                () => {
+                                    Linking
+                                        .openSettings();
+                                }
+                        }
+                    ]
+                );
+            },
+            []
+        );
+
+    const startNativeSearchTracking =
+        useCallback(
+            async (message) => {
+                const sessionId =
+                    Number(
+                        message?.sessionId ??
+                        message?.session_id
+                    );
+
+                const userId =
+                    Number(
+                        message?.userId ??
+                        message?.user_id
+                    );
+
+                const token =
+                    String(
+                        message?.token ||
+                        ''
+                    );
+
+                if (
+                    !Number.isInteger(sessionId) ||
+                    sessionId <= 0 ||
+                    !Number.isInteger(userId) ||
+                    userId <= 0 ||
+                    !token
+                ) {
+                    Alert.alert(
+                        'Search Party tracking error',
+                        'Skedoggle could not securely start Search Party tracking. Leave the Search Party and join it again.'
+                    );
+
+                    return;
+                }
+
+                const previousCredentials =
+                    credentialsRef.current;
+
+                credentialsRef.current = {
+                    sessionId,
+                    userId,
+                    token,
+                };
+
+                /*
+                 Upload any points left by the same Search Party before
+                 starting or resuming the native location manager.
+                */
+                await flushBufferedPoints();
+
+                if (
+                    trackingRef.current &&
+                    previousCredentials
+                        ?.sessionId ===
+                        sessionId
+                ) {
+                    return;
+                }
+
+                try {
+                    let androidPermissions =
+                        null;
+
+                    if (
+                        Platform.OS ===
+                        'android'
+                    ) {
+                        androidPermissions =
+                            await requestAndroidWalkPermissions();
+
+                        if (
+                            !androidPermissions
+                                .locationGranted
+                        ) {
+                            trackingRef.current =
+                                false;
+
+                            showSearchPermissionAlert();
+                            return;
+                        }
+                    }
+
+                    let result = null;
+
+                    if (
+                        typeof BuddybossCustomCode
+                            ?.startSearchPartyTracking ===
+                        'function'
+                    ) {
+                        result =
+                            await BuddybossCustomCode
+                                .startSearchPartyTracking(
+                                    sessionId,
+                                    userId,
+                                    token
+                                );
+                    } else if (
+                        typeof BuddybossCustomCode
+                            ?.startBackgroundTrackingForMode ===
+                        'function'
+                    ) {
+                        result =
+                            await BuddybossCustomCode
+                                .startBackgroundTrackingForMode(
+                                    'search_party',
+                                    sessionId
+                                );
+                    } else if (
+                        typeof BuddybossCustomCode
+                            ?.startBackgroundTracking ===
+                        'function'
+                    ) {
+                        /*
+                         Compatibility fallback for an older Android
+                         native module. The current iOS module supports
+                         the mode-aware method above.
+                        */
+                        result =
+                            await BuddybossCustomCode
+                                .startBackgroundTracking();
+                    } else {
+                        throw new Error(
+                            'Native background tracking is unavailable.'
+                        );
+                    }
+
+                    trackingRef.current =
+                        true;
+
+                    nativeDirectUploadRef.current =
+                        Boolean(
+                            result
+                                ?.nativeDirectUpload
+                        );
+
+                    if (
+                        Platform.OS ===
+                        'ios'
+                    ) {
+                        const permissionStatus =
+                            Number(
+                                result
+                                    ?.authorizationStatus
+                            );
+
+                        const locationGranted =
+                            permissionStatus === 3 ||
+                            permissionStatus === 4;
+
+                        const preciseLocationEnabled =
+                            result
+                                ?.preciseLocationEnabled !==
+                            false;
+
+                        if (!locationGranted) {
+                            trackingRef.current =
+                                false;
+
+                            showSearchPermissionAlert();
+                        } else if (
+                            !preciseLocationEnabled
+                        ) {
+                            Alert.alert(
+                                'Precise Location is off',
+                                [
+                                    'Search Parties need precise location so other helpers can see which areas have been searched.',
+                                    '',
+                                    'Please make sure Precise Location is on in Skedoggle’s Location Settings.'
+                                ].join('\n'),
+                                [
+                                    {
+                                        text:
+                                            'Continue Anyway',
+                                        style:
+                                            'cancel'
+                                    },
+                                    {
+                                        text:
+                                            'Open Settings',
+                                        onPress:
+                                            () => {
+                                                Linking
+                                                    .openSettings();
+                                            }
+                                    }
+                                ]
+                            );
+                        }
+                    } else if (
+                        Platform.OS ===
+                        'android'
+                    ) {
+                        const preciseLocation =
+                            Boolean(
+                                result
+                                    ?.fineLocationGranted ??
+                                androidPermissions
+                                    ?.fineLocationGranted
+                            );
+
+                        if (!preciseLocation) {
+                            Alert.alert(
+                                'Precise Location is off',
+                                'For an accurate shared search map, open Settings and enable precise location for Skedoggle.',
+                                [
+                                    {
+                                        text:
+                                            'Continue Anyway',
+                                        style:
+                                            'cancel'
+                                    },
+                                    {
+                                        text:
+                                            'Open Settings',
+                                        onPress:
+                                            () => {
+                                                Linking
+                                                    .openSettings();
+                                            }
+                                    }
+                                ]
+                            );
+                        }
+                    }
+
+                    await flushBufferedPoints();
+                } catch (error) {
+                    trackingRef.current =
+                        false;
+
+                    nativeDirectUploadRef.current =
+                        false;
+
+                    const errorCode =
+                        String(
+                            error?.code ||
+                            ''
+                        );
+
+                    if (
+                        errorCode ===
+                            'location_permission_denied' ||
+                        errorCode ===
+                            'location_permission_unavailable'
+                    ) {
+                        showSearchPermissionAlert();
+                    } else {
+                        Alert.alert(
+                            'Search Party GPS error',
+                            String(
+                                error?.message ??
+                                error
+                            )
+                        );
+                    }
+                }
+            },
+            [
+                flushBufferedPoints,
+                showSearchPermissionAlert,
+            ]
+        );
+
+    const handleWebViewMessage =
+        useCallback(
+            (event) => {
+                const rawData =
+                    event?.nativeEvent?.data;
+
+                let message =
+                    rawData;
+
+                if (
+                    typeof rawData ===
+                    'string'
+                ) {
+                    try {
+                        message =
+                            JSON.parse(rawData);
+                    } catch (error) {
+                        return;
+                    }
+                }
+
+                const action =
+                    message?.action;
+
+                if (
+                    action ===
+                        'startSearchPartyTracking'
+                ) {
+                    startNativeSearchTracking(
+                        message
+                    );
+                }
+
+                if (
+                    action ===
+                        'stopSearchPartyTracking'
+                ) {
+                    stopNativeSearchTracking();
+                }
+            },
+            [
+                startNativeSearchTracking,
+                stopNativeSearchTracking,
+            ]
+        );
+
+    useEffect(
+        () => {
+            if (
+                (
+                    Platform.OS !==
+                        'ios' &&
+                    Platform.OS !==
+                        'android'
+                ) ||
+                !BuddybossCustomCode
+            ) {
+                return undefined;
+            }
+
+            let subscription = null;
+
+            try {
+                const emitter =
+                    new NativeEventEmitter(
+                        BuddybossCustomCode
+                    );
+
+                subscription =
+                    emitter.addListener(
+                        'SkedoggleLocation',
+                        (location) => {
+                            if (
+                                trackingRef.current &&
+                                credentialsRef.current &&
+                                !nativeDirectUploadRef.current
+                            ) {
+                                uploadPoints([
+                                    location,
+                                ]);
+                            }
+                        }
+                    );
+            } catch (error) {
+                Alert.alert(
+                    'Search Party GPS error',
+                    String(
+                        error?.message ??
+                        error
+                    )
+                );
+            }
+
+            return () => {
+                try {
+                    subscription
+                        ?.remove();
+                } catch (error) {
+                    // Ignore cleanup error.
+                }
+            };
+        },
+        [
+            uploadPoints,
+        ]
+    );
+
+    useEffect(
+        () => {
+            const timer =
+                setInterval(
+                    () => {
+                        flushBufferedPoints();
+                    },
+                    2000
+                );
+
+            return () => {
+                clearInterval(timer);
+            };
+        },
+        [
+            flushBufferedPoints,
+        ]
+    );
+
+    useEffect(
+        () => {
+            const subscription =
+                AppState.addEventListener(
+                    'change',
+                    (nextState) => {
+                        const previous =
+                            appStateRef.current;
+
+                        appStateRef.current =
+                            nextState;
+
+                        if (
+                            nextState ===
+                                'active' &&
+                            (
+                                previous ===
+                                    'background' ||
+                                previous ===
+                                    'inactive'
+                            )
+                        ) {
+                            setTimeout(
+                                flushBufferedPoints,
+                                750
+                            );
+                        }
+                    }
+                );
+
+            return () => {
+                subscription.remove();
+            };
+        },
+        [
+            flushBufferedPoints,
+        ]
+    );
+
+    useEffect(
+        () => {
+            searchPartyWebViewMessageHandler =
+                handleWebViewMessage;
+
+            return () => {
+                if (
+                    searchPartyWebViewMessageHandler ===
+                    handleWebViewMessage
+                ) {
+                    searchPartyWebViewMessageHandler =
+                        null;
+                }
+            };
+        },
+        [
+            handleWebViewMessage,
+        ]
+    );
+
+    return (
+        <View
+            style={{
+                flex: 1,
+            }}
+        >
+            {defaultComponent}
+        </View>
+    );
+};
+
 const styles = StyleSheet.create({
     introSafeArea: {
         flex: 1,
@@ -1431,6 +2356,43 @@ export const applyCustomCode = (
         return;
     }
 
+    if (
+        typeof pageApi
+            .setWebViewProps ===
+        'function'
+    ) {
+        pageApi.setWebViewProps(
+            (webViewContext) => {
+                const webViewUrl =
+                    getPageUrl(
+                        webViewContext
+                    );
+
+                if (
+                    !isSearchPartyUrl(
+                        webViewUrl
+                    )
+                ) {
+                    return {};
+                }
+
+                return {
+                    onMessage:
+                        (event) => {
+                            if (
+                                typeof searchPartyWebViewMessageHandler ===
+                                'function'
+                            ) {
+                                searchPartyWebViewMessageHandler(
+                                    event
+                                );
+                            }
+                        },
+                };
+            }
+        );
+    }
+
     pageApi.setPageComponent(
         (
             props,
@@ -1440,20 +2402,34 @@ export const applyCustomCode = (
                 getPageUrl(props);
 
             if (
-                !isWalkTrackerUrl(
+                isWalkTrackerUrl(
                     pageUrl
                 )
             ) {
-                return Component;
+                return React.createElement(
+                    WalkNativeSidecar,
+                    {
+                        defaultComponent:
+                            Component,
+                    }
+                );
             }
 
-            return React.createElement(
-                WalkNativeSidecar,
-                {
-                    defaultComponent:
-                        Component,
-                }
-            );
+            if (
+                isSearchPartyUrl(
+                    pageUrl
+                )
+            ) {
+                return React.createElement(
+                    SearchPartyNativeSidecar,
+                    {
+                        defaultComponent:
+                            Component,
+                    }
+                );
+            }
+
+            return Component;
         }
     );
 };
