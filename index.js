@@ -22,6 +22,8 @@ import {
     View,
 } from 'react-native';
 
+import NitroCookies from 'react-native-nitro-cookies';
+
 const {
     BuddybossCustomCode,
 } = NativeModules;
@@ -42,6 +44,487 @@ let installed = false;
  mounted SearchPartyNativeSidecar through this small shared callback.
 */
 let searchPartyWebViewMessageHandler = null;
+
+const LOCATION_INTRO_COOKIE_URL =
+    'https://skedoggle.com';
+
+const LOCATION_INTRO_COOKIE_NAME =
+    'skedoggle_location_intro_v5';
+
+const markLocationIntroSeenShared =
+    async () => {
+        try {
+            if (
+                typeof BuddybossCustomCode
+                    ?.markLocationIntroSeen ===
+                'function'
+            ) {
+                await BuddybossCustomCode
+                    .markLocationIntroSeen();
+            }
+        } catch (error) {
+            /*
+             The WebView cookie still prevents the map introduction
+             from repeating if the native preference cannot be saved.
+            */
+        }
+
+        try {
+            await NitroCookies.set(
+                LOCATION_INTRO_COOKIE_URL,
+                {
+                    name:
+                        LOCATION_INTRO_COOKIE_NAME,
+
+                    value:
+                        '1',
+
+                    domain:
+                        'skedoggle.com',
+
+                    path:
+                        '/',
+
+                    secure:
+                        true,
+
+                    expires:
+                        '2036-01-01T00:00:00.000Z',
+                }
+            );
+        } catch (error) {
+            /*
+             Map pages also set this cookie inside the WebView.
+            */
+        }
+    };
+
+const buildMapLocationIntroductionScript =
+    () => {
+        const cookieName =
+            JSON.stringify(
+                LOCATION_INTRO_COOKIE_NAME
+            );
+
+        return `
+(function () {
+    var COOKIE_NAME = ${cookieName};
+
+    function cookieSeen() {
+        return document.cookie
+            .split(';')
+            .map(function (part) {
+                return part.trim();
+            })
+            .some(function (part) {
+                return part.indexOf(
+                    COOKIE_NAME + '=1'
+                ) === 0;
+            });
+    }
+
+    if (
+        cookieSeen() ||
+        window.__skedoggleLocationIntroInstalled
+    ) {
+        return true;
+    }
+
+    window.__skedoggleLocationIntroInstalled =
+        true;
+
+    var geolocation =
+        navigator.geolocation;
+
+    var originalGetCurrentPosition =
+        geolocation &&
+        typeof geolocation.getCurrentPosition ===
+            'function'
+            ? geolocation.getCurrentPosition
+                .bind(geolocation)
+            : null;
+
+    var originalWatchPosition =
+        geolocation &&
+        typeof geolocation.watchPosition ===
+            'function'
+            ? geolocation.watchPosition
+                .bind(geolocation)
+            : null;
+
+    var originalClearWatch =
+        geolocation &&
+        typeof geolocation.clearWatch ===
+            'function'
+            ? geolocation.clearWatch
+                .bind(geolocation)
+            : null;
+
+    var queuedCurrentRequests = [];
+    var queuedWatches = {};
+    var activeWatchIds = {};
+    var nextQueuedWatchId = -1;
+    var released = false;
+
+    if (geolocation && originalGetCurrentPosition) {
+        geolocation.getCurrentPosition =
+            function (
+                success,
+                error,
+                options
+            ) {
+                if (released) {
+                    return originalGetCurrentPosition(
+                        success,
+                        error,
+                        options
+                    );
+                }
+
+                queuedCurrentRequests.push({
+                    success: success,
+                    error: error,
+                    options: options,
+                });
+            };
+    }
+
+    if (geolocation && originalWatchPosition) {
+        geolocation.watchPosition =
+            function (
+                success,
+                error,
+                options
+            ) {
+                if (released) {
+                    return originalWatchPosition(
+                        success,
+                        error,
+                        options
+                    );
+                }
+
+                var queuedId =
+                    nextQueuedWatchId--;
+
+                queuedWatches[queuedId] = {
+                    success: success,
+                    error: error,
+                    options: options,
+                };
+
+                return queuedId;
+            };
+    }
+
+    if (geolocation && originalClearWatch) {
+        geolocation.clearWatch =
+            function (watchId) {
+                if (
+                    Object.prototype
+                        .hasOwnProperty.call(
+                            queuedWatches,
+                            watchId
+                        )
+                ) {
+                    delete queuedWatches[
+                        watchId
+                    ];
+
+                    return;
+                }
+
+                if (
+                    Object.prototype
+                        .hasOwnProperty.call(
+                            activeWatchIds,
+                            watchId
+                        )
+                ) {
+                    originalClearWatch(
+                        activeWatchIds[
+                            watchId
+                        ]
+                    );
+
+                    delete activeWatchIds[
+                        watchId
+                    ];
+
+                    return;
+                }
+
+                originalClearWatch(
+                    watchId
+                );
+            };
+    }
+
+    function releaseLocationRequests() {
+        if (released) {
+            return;
+        }
+
+        released = true;
+
+        queuedCurrentRequests
+            .splice(0)
+            .forEach(function (request) {
+                originalGetCurrentPosition(
+                    request.success,
+                    request.error,
+                    request.options
+                );
+            });
+
+        Object.keys(
+            queuedWatches
+        ).forEach(function (queuedId) {
+            var request =
+                queuedWatches[
+                    queuedId
+                ];
+
+            delete queuedWatches[
+                queuedId
+            ];
+
+            activeWatchIds[
+                queuedId
+            ] =
+                originalWatchPosition(
+                    request.success,
+                    request.error,
+                    request.options
+                );
+        });
+    }
+
+    function markSeen() {
+        document.cookie =
+            COOKIE_NAME +
+            '=1; Max-Age=315360000; Path=/; SameSite=Lax; Secure';
+
+        try {
+            window.ReactNativeWebView
+                .postMessage(
+                    JSON.stringify({
+                        action:
+                            'markLocationIntroSeen'
+                    })
+                );
+        } catch (error) {
+            /*
+             The cookie still prevents the
+             introduction from repeating.
+            */
+        }
+    }
+
+    function showIntroduction() {
+        if (
+            !document.body ||
+            document.getElementById(
+                'skedoggle-location-intro'
+            )
+        ) {
+            return;
+        }
+
+        var overlay =
+            document.createElement(
+                'div'
+            );
+
+        overlay.id =
+            'skedoggle-location-intro';
+
+        overlay.innerHTML =
+            '<div class="sk-location-intro-scroll">' +
+                '<div class="sk-location-intro-panel">' +
+                    '<div class="sk-location-intro-paw">🐾</div>' +
+                    '<h1>Location helps dog owners help each other</h1>' +
+                    '<p class="sk-location-intro-lead">Skedoggle uses your location when you choose to:</p>' +
+                    '<div class="sk-location-intro-card">' +
+                        '<strong>Explore nearby</strong>' +
+                        '<span>View dog-friendly places, pet services and lost dogs near you.</span>' +
+                    '</div>' +
+                    '<div class="sk-location-intro-card">' +
+                        '<strong>Map a dog walk</strong>' +
+                        '<span>Record your route while your walk is active, including when your screen is locked.</span>' +
+                    '</div>' +
+                    '<div class="sk-location-intro-card">' +
+                        '<strong>Join a lost-dog Search Party</strong>' +
+                        '<span>Your live position may be shown to other participants so everyone can coordinate safely.</span>' +
+                    '</div>' +
+                    '<div class="sk-location-intro-card">' +
+                        '<strong>When iPhone asks</strong>' +
+                        '<span>Select <b>Allow While Using App</b> and make sure <b>Precise Location</b> is on.</span>' +
+                    '</div>' +
+                    '<p class="sk-location-intro-control">Skedoggle does not track your location unless you start a feature that needs it.</p>' +
+                    '<button id="skedoggle-location-intro-continue" type="button">Continue</button>' +
+                    '<p class="sk-location-intro-footer">You can change location access at any time in your iPhone Settings.</p>' +
+                '</div>' +
+            '</div>';
+
+        var style =
+            document.createElement(
+                'style'
+            );
+
+        style.id =
+            'skedoggle-location-intro-style';
+
+        style.textContent =
+            '#skedoggle-location-intro{' +
+                'position:fixed;' +
+                'inset:0;' +
+                'z-index:2147483647;' +
+                'background:#fff;' +
+                'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+                'color:#3f3f46;' +
+            '}' +
+            '.sk-location-intro-scroll{' +
+                'height:100%;' +
+                'overflow:auto;' +
+                '-webkit-overflow-scrolling:touch;' +
+                'box-sizing:border-box;' +
+                'padding:calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 28px);' +
+            '}' +
+            '.sk-location-intro-panel{' +
+                'width:100%;' +
+                'max-width:520px;' +
+                'min-height:100%;' +
+                'margin:0 auto;' +
+                'display:flex;' +
+                'flex-direction:column;' +
+                'justify-content:center;' +
+                'box-sizing:border-box;' +
+            '}' +
+            '.sk-location-intro-paw{' +
+                'width:78px;' +
+                'height:78px;' +
+                'border-radius:50%;' +
+                'display:flex;' +
+                'align-items:center;' +
+                'justify-content:center;' +
+                'align-self:center;' +
+                'background:#f8e7f4;' +
+                'font-size:38px;' +
+                'margin-bottom:22px;' +
+            '}' +
+            '#skedoggle-location-intro h1{' +
+                'margin:0 0 14px;' +
+                'color:#261e8c;' +
+                'font-size:29px;' +
+                'line-height:1.22;' +
+                'text-align:center;' +
+            '}' +
+            '.sk-location-intro-lead{' +
+                'margin:0 0 22px;' +
+                'font-size:17px;' +
+                'line-height:1.48;' +
+                'text-align:center;' +
+            '}' +
+            '.sk-location-intro-card{' +
+                'background:#f7f7fa;' +
+                'border-radius:16px;' +
+                'padding:16px 18px;' +
+                'margin-bottom:12px;' +
+            '}' +
+            '.sk-location-intro-card strong{' +
+                'display:block;' +
+                'color:#261e8c;' +
+                'font-size:17px;' +
+                'margin-bottom:6px;' +
+            '}' +
+            '.sk-location-intro-card span{' +
+                'display:block;' +
+                'font-size:15px;' +
+                'line-height:1.48;' +
+            '}' +
+            '.sk-location-intro-control{' +
+                'font-size:15px;' +
+                'line-height:1.48;' +
+                'text-align:center;' +
+                'margin:8px 4px 4px;' +
+            '}' +
+            '#skedoggle-location-intro-continue{' +
+                'width:100%;' +
+                'min-height:56px;' +
+                'border:0;' +
+                'border-radius:28px;' +
+                'background:#d622a6;' +
+                'color:#fff;' +
+                'font-size:17px;' +
+                'font-weight:700;' +
+                'margin-top:16px;' +
+                '-webkit-appearance:none;' +
+            '}' +
+            '.sk-location-intro-footer{' +
+                'color:#71717a;' +
+                'font-size:13px;' +
+                'line-height:1.45;' +
+                'text-align:center;' +
+                'margin:16px 0 0;' +
+            '}';
+
+        document.head
+            .appendChild(
+                style
+            );
+
+        document.body
+            .appendChild(
+                overlay
+            );
+
+        var button =
+            document.getElementById(
+                'skedoggle-location-intro-continue'
+            );
+
+        if (button) {
+            button.addEventListener(
+                'click',
+                function () {
+                    markSeen();
+                    releaseLocationRequests();
+
+                    overlay.remove();
+
+                    if (style.parentNode) {
+                        style.parentNode
+                            .removeChild(
+                                style
+                            );
+                    }
+                },
+                {
+                    once: true
+                }
+            );
+        }
+    }
+
+    if (
+        document.readyState ===
+        'loading'
+    ) {
+        document.addEventListener(
+            'DOMContentLoaded',
+            showIntroduction,
+            {
+                once: true
+            }
+        );
+    } else {
+        showIntroduction();
+    }
+})();
+true;
+`;
+    };
 
 
 const ANDROID_NOTIFICATION_PERMISSION =
@@ -700,16 +1183,14 @@ const LocationIntroductionOnlySidecar = ({
 
                 try {
                     if (
-                        typeof BuddybossCustomCode
-                            ?.markLocationIntroSeen ===
+                        typeof markLocationIntroSeenShared ===
                         'function'
                     ) {
                         /*
                          The same one-time preference is shared by the
                          maps, map pages, Walk Tracking and Search Parties.
                         */
-                        await BuddybossCustomCode
-                            .markLocationIntroSeen();
+                        await markLocationIntroSeenShared();
                     }
                 } catch (error) {
                     /*
@@ -867,12 +1348,10 @@ const WalkNativeSidecar = ({
 
                 try {
                     if (
-                        typeof BuddybossCustomCode
-                            ?.markLocationIntroSeen ===
+                        typeof markLocationIntroSeenShared ===
                         'function'
                     ) {
-                        await BuddybossCustomCode
-                            .markLocationIntroSeen();
+                        await markLocationIntroSeenShared();
                     }
                 } catch (error) {
                     /*
@@ -1819,8 +2298,7 @@ const SearchPartyNativeSidecar = ({
 
                 try {
                     if (
-                        typeof BuddybossCustomCode
-                            ?.markLocationIntroSeen ===
+                        typeof markLocationIntroSeenShared ===
                         'function'
                     ) {
                         /*
@@ -1829,8 +2307,7 @@ const SearchPartyNativeSidecar = ({
                          either screen is acknowledged, the introduction
                          is not shown again on the other feature.
                         */
-                        await BuddybossCustomCode
-                            .markLocationIntroSeen();
+                        await markLocationIntroSeenShared();
                     }
                 } catch (error) {
                     /*
@@ -2774,18 +3251,58 @@ export const applyCustomCode = (
                         webViewContext
                     );
 
-                if (
-                    !isSearchPartyUrl(
+                const searchPartyPage =
+                    isSearchPartyUrl(
                         webViewUrl
-                    )
+                    );
+
+                const locationMapPage =
+                    isLocationMapUrl(
+                        webViewUrl
+                    );
+
+                if (
+                    !searchPartyPage &&
+                    !locationMapPage
                 ) {
                     return {};
                 }
 
-                return {
+                const webViewProps = {
                     onMessage:
                         (event) => {
+                            const rawData =
+                                event
+                                    ?.nativeEvent
+                                    ?.data;
+
+                            let message =
+                                rawData;
+
                             if (
+                                typeof rawData ===
+                                'string'
+                            ) {
+                                try {
+                                    message =
+                                        JSON.parse(
+                                            rawData
+                                        );
+                                } catch (error) {
+                                    message =
+                                        null;
+                                }
+                            }
+
+                            if (
+                                message?.action ===
+                                'markLocationIntroSeen'
+                            ) {
+                                markLocationIntroSeenShared();
+                            }
+
+                            if (
+                                searchPartyPage &&
                                 typeof searchPartyWebViewMessageHandler ===
                                 'function'
                             ) {
@@ -2795,6 +3312,14 @@ export const applyCustomCode = (
                             }
                         },
                 };
+
+                if (locationMapPage) {
+                    webViewProps
+                        .injectedJavaScriptBeforeContentLoaded =
+                            buildMapLocationIntroductionScript();
+                }
+
+                return webViewProps;
             }
         );
     }
@@ -2828,20 +3353,6 @@ export const applyCustomCode = (
             ) {
                 return React.createElement(
                     SearchPartyNativeSidecar,
-                    {
-                        defaultComponent:
-                            Component,
-                    }
-                );
-            }
-
-            if (
-                isLocationMapUrl(
-                    pageUrl
-                )
-            ) {
-                return React.createElement(
-                    LocationIntroductionOnlySidecar,
                     {
                         defaultComponent:
                             Component,
