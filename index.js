@@ -85,8 +85,14 @@ let nearbyActivityRefreshContext = {
     filter:
         'all',
 
+    /*
+     BuddyBoss activitiesRequested() expects the subfilter argument to be an
+     object, for example {type: 'activity_update'}. Keep this value consistently
+     typed as an object so the app build's JavaScript/type validation does not
+     see a string/object conflict.
+    */
     subfilters:
-        '',
+        {},
 
     searchTerm:
         '',
@@ -174,11 +180,17 @@ const NearbyActivityRadiusFilter =
             'all';
 
         const currentSubFilters =
-            props
-                ?.activeSubFilters ||
-            nearbyActivityRefreshContext
-                .subfilters ||
-            '';
+            (
+                props
+                    ?.activeSubFilters &&
+                typeof props
+                    .activeSubFilters ===
+                    'object'
+            )
+                ? props
+                      .activeSubFilters
+                : nearbyActivityRefreshContext
+                      .subfilters;
 
         const currentSearchTerm =
             props?.searchTerm ||
@@ -4313,7 +4325,7 @@ export const applyCustomCode = (
                                       type:
                                           params.type,
                                   }
-                                : '';
+                                : {};
                     }
 
                     if (
