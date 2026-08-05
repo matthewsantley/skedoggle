@@ -73,8 +73,24 @@ const ALLOWED_NEARBY_ACTIVITY_RADII =
 let nearbyActivityRadius =
     0;
 
-let nearbyActivitiesApi =
-    null;
+/*
+ A new generation is assigned whenever the member changes radius. BuddyBoss
+ can otherwise regard a return to the parameter-free All Areas request as an
+ already cached query and leave the nearby items visible until pull-to-refresh.
+*/
+let nearbyActivityRequestGeneration =
+    Date.now();
+
+let nearbyActivityRefreshContext = {
+    filter:
+        'all',
+
+    subfilters:
+        '',
+
+    searchTerm:
+        '',
+};
 
 const normaliseNearbyActivityRadius =
     (value) => {
@@ -89,6 +105,13 @@ const normaliseNearbyActivityRadius =
 
 const isMainActivitiesFilterScreen =
     (props) => {
+        if (
+            props
+                ?.forceActivityScreen
+        ) {
+            return true;
+        }
+
         const routeObject =
             String(
                 props
@@ -146,11 +169,21 @@ const NearbyActivityRadiusFilter =
 
         const currentFilter =
             props?.filter ||
+            nearbyActivityRefreshContext
+                .filter ||
             'all';
 
         const currentSubFilters =
             props
                 ?.activeSubFilters ||
+            nearbyActivityRefreshContext
+                .subfilters ||
+            '';
+
+        const currentSearchTerm =
+            props?.searchTerm ||
+            nearbyActivityRefreshContext
+                .searchTerm ||
             '';
 
         const isActivitiesScreen =
@@ -166,13 +199,14 @@ const NearbyActivityRadiusFilter =
                             currentFilter,
                             currentSubFilters,
                             true,
-                            ''
+                            currentSearchTerm
                         )
                     );
                 },
                 [
                     currentFilter,
                     currentSubFilters,
+                    currentSearchTerm,
                     dispatch,
                 ]
             );
@@ -262,6 +296,9 @@ const NearbyActivityRadiusFilter =
                     nearbyActivityRadius =
                         radius;
 
+                    nearbyActivityRequestGeneration =
+                        Date.now();
+
                     setSelectedRadius(
                         radius
                     );
@@ -275,7 +312,10 @@ const NearbyActivityRadiusFilter =
                             () => {}
                         );
 
-                    refreshActivities();
+                    setTimeout(
+                        refreshActivities,
+                        0
+                    );
                 },
                 [
                     refreshActivities,
@@ -4103,6 +4143,8 @@ const styles = StyleSheet.create({
     nearbyActivityContainer: {
         backgroundColor:
             '#ffffff',
+        marginBottom:
+            10,
         borderTopWidth:
             StyleSheet.hairlineWidth,
         borderBottomWidth:
@@ -4207,16 +4249,12 @@ export const applyCustomCode = (
 
     /*
      Daily Woof is BuddyBoss's native Activity Feed screen, not a WordPress
-     PageScreen. Register the one-time location introduction directly on the
-     Activity Feed. It renders as a full-screen native Modal and does not
-     request location permission.
+     PageScreen. Mount Skedoggle's additions before the first activity instead
+     of inside BuddyBoss's fixed Activity header.
     */
     const activitiesApi =
         externalCodeSetup
             ?.activitiesScreenApi;
-
-    nearbyActivitiesApi =
-        activitiesApi;
 
     if (
         activitiesApi &&
@@ -4235,40 +4273,85 @@ export const applyCustomCode = (
                         ...params,
                     };
 
-                    if (
-                        nearbyActivityRadius >
-                        0
-                    ) {
-                        nextParams
-                            .skedoggle_radius =
-                            nearbyActivityRadius;
-                    } else {
-                        delete nextParams
-                            .skedoggle_radius;
+                    /*
+                     Keep enough of BuddyBoss's current request context to
+                     refresh the same built-in scope/search when the member
+                     changes the distance.
+                    */
+                    const requestedFilter =
+                        String(
+                            params
+                                ?.scope ||
+                            params
+                                ?.filter ||
+                            ''
+                        )
+                            .trim();
+
+                    if (requestedFilter) {
+                        nearbyActivityRefreshContext
+                            .filter =
+                            requestedFilter;
                     }
+
+                    if (
+                        Object
+                            .prototype
+                            .hasOwnProperty
+                            .call(
+                                params ||
+                                    {},
+                                'type'
+                            )
+                    ) {
+                        nearbyActivityRefreshContext
+                            .subfilters =
+                            params.type &&
+                            params.type !==
+                                '-1'
+                                ? {
+                                      type:
+                                          params.type,
+                                  }
+                                : '';
+                    }
+
+                    if (
+                        Object
+                            .prototype
+                            .hasOwnProperty
+                            .call(
+                                params ||
+                                    {},
+                                'search'
+                            )
+                    ) {
+                        nearbyActivityRefreshContext
+                            .searchTerm =
+                            params.search ||
+                            '';
+                    }
+
+                    /*
+                     Always send an explicit value. Radius 0 means All Areas.
+                     Removing the parameter entirely allowed BuddyBoss's
+                     persisted activity cache to treat the request as the
+                     previously loaded default feed.
+
+                     The generation value changes only when the member changes
+                     distance, so initial loading, refresh and pagination for
+                     the selected radius continue to share one request identity.
+                    */
+                    nextParams
+                        .skedoggle_radius =
+                        nearbyActivityRadius;
+
+                    nextParams
+                        .skedoggle_radius_generation =
+                        nearbyActivityRequestGeneration;
 
                     return nextParams;
                 }
-            );
-    }
-
-    const filterScreenApi =
-        externalCodeSetup
-            ?.filterScreenApiHooks;
-
-    if (
-        filterScreenApi &&
-        typeof filterScreenApi
-            .setAfterFilterComponent ===
-            'function'
-    ) {
-        /*
-         Add the selector below BuddyBoss's existing filter row. This does not
-         replace the activity composer, list header or built-in filters.
-        */
-        filterScreenApi
-            .setAfterFilterComponent(
-                NearbyActivityRadiusFilter
             );
     }
 
@@ -4279,13 +4362,9 @@ export const applyCustomCode = (
             'function'
     ) {
         /*
-         Do not use setActivitiesListProps({ ListHeaderComponent: ... }).
-         BuddyBoss already uses ListHeaderComponent for its create-post
-         composer, and replacing it removes the box at the top of Daily Woof.
-
-         The supported BeforeActivitySingle hook adds our component without
-         replacing any existing Activity Feed controls. Render it only before
-         the first activity; the component itself opens a full-screen Modal.
+         Keep all Skedoggle additions outside BuddyBoss's Activity header.
+         The header remains entirely owned by BuddyBoss, preserving its
+         search bar, create-post composer and built-in filter controls.
         */
         activitiesApi
             .setBeforeActivitySingleComponent(
@@ -4299,10 +4378,49 @@ export const applyCustomCode = (
                         return null;
                     }
 
-                    return React.createElement(
-                        DailyWoofLocationIntroduction
+                    return (
+                        <View>
+                            <DailyWoofLocationIntroduction />
+
+                            <NearbyActivityRadiusFilter
+                                forceActivityScreen={
+                                    true
+                                }
+                            />
+                        </View>
                     );
                 }
+            );
+    }
+
+    if (
+        activitiesApi &&
+        typeof activitiesApi
+            .setActivitiesListProps ===
+            'function'
+    ) {
+        /*
+         If a nearby radius returns no activities, there is no first item on
+         which to mount the selector. Supply only ListEmptyComponent so the
+         member can always select All areas again. Never override
+         ListHeaderComponent.
+        */
+        activitiesApi
+            .setActivitiesListProps(
+                () => ({
+                    ListEmptyComponent:
+                        () => (
+                            <View>
+                                <DailyWoofLocationIntroduction />
+
+                                <NearbyActivityRadiusFilter
+                                    forceActivityScreen={
+                                        true
+                                    }
+                                />
+                            </View>
+                        ),
+                })
             );
     }
 
