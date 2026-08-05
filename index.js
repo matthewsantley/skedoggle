@@ -460,6 +460,15 @@ const NearbyActivityRadiusFilter =
                     Show posts from members near you
                 </Text>
 
+                <Text
+                    style={
+                        styles
+                            .nearbyActivityNote
+                    }
+                >
+                    Based on your saved postcode
+                </Text>
+
                 <ScrollView
                     horizontal={true}
                     showsHorizontalScrollIndicator={
@@ -530,14 +539,6 @@ const NearbyActivityRadiusFilter =
                     )}
                 </ScrollView>
 
-                <Text
-                    style={
-                        styles
-                            .nearbyActivityNote
-                    }
-                >
-                    Based on your saved postcode. Distances may be approximate.
-                </Text>
             </View>
         );
     };
@@ -4250,10 +4251,12 @@ const styles = StyleSheet.create({
             15,
         fontWeight:
             '700',
+        textAlign:
+            'center',
         paddingHorizontal:
             16,
         marginBottom:
-            9,
+            3,
     },
 
     nearbyActivityOptions: {
@@ -4317,10 +4320,12 @@ const styles = StyleSheet.create({
             12,
         lineHeight:
             17,
+        textAlign:
+            'center',
         paddingHorizontal:
             16,
-        marginTop:
-            5,
+        marginBottom:
+            9,
     },
 });
 
