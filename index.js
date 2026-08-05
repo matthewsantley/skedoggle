@@ -451,13 +451,12 @@ const NearbyActivityRadiusFilter =
                         .nearbyActivityContainer
                 }
             >
-                <Text
-                    style={
-                        styles
-                            .nearbyActivityHeading
-                    }
-                >
-                    {'Show posts from members near you\nBased on your saved postcode'}
+                <Text style={styles.nearbyActivityHeading}>
+                    Show posts from members near you
+                </Text>
+
+                <Text style={styles.nearbyActivityNote}>
+                    Based on your saved postcode
                 </Text>
 
                 <ScrollView
@@ -4247,7 +4246,7 @@ const styles = StyleSheet.create({
         paddingHorizontal:
             16,
         marginBottom:
-            9,
+            3,
     },
 
     nearbyActivityOptions: {
@@ -4311,10 +4310,12 @@ const styles = StyleSheet.create({
             12,
         lineHeight:
             17,
+        textAlign:
+            'center',
         paddingHorizontal:
             16,
-        marginTop:
-            5,
+        marginBottom:
+            9,
     },
 });
 
