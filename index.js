@@ -536,7 +536,7 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityNote
                     }
                 >
-                    Based on your saved postcode.
+                    Based on your saved postcode. Distances may be approximate.
                 </Text>
             </View>
         );
