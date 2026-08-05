@@ -457,7 +457,7 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityHeading
                     }
                 >
-                    Show posts from members near you
+                    {'Show posts from members near you\nBased on your saved postcode'}
                 </Text>
 
                 <ScrollView
@@ -530,14 +530,6 @@ const NearbyActivityRadiusFilter =
                     )}
                 </ScrollView>
 
-                <Text
-                    style={
-                        styles
-                            .nearbyActivityNote
-                    }
-                >
-                    Based on your saved postcode. Distances may be approximate.
-                </Text>
             </View>
         );
     };
@@ -4250,6 +4242,8 @@ const styles = StyleSheet.create({
             15,
         fontWeight:
             '700',
+        textAlign:
+            'center',
         paddingHorizontal:
             16,
         marginBottom:
