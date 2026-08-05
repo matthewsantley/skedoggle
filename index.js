@@ -24,6 +24,13 @@ import {
 } from 'react-native';
 
 import NitroCookies from 'react-native-nitro-cookies';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+    useDispatch,
+} from 'react-redux';
+import {
+    activitiesRequested,
+} from '@src/actions/activities';
 
 const {
     BuddybossCustomCode,
@@ -51,6 +58,364 @@ const LOCATION_INTRO_COOKIE_URL =
 
 const LOCATION_INTRO_COOKIE_NAME =
     'skedoggle_location_intro_v5';
+
+const NEARBY_ACTIVITY_RADIUS_KEY =
+    'skedoggle_nearby_activity_radius_v1';
+
+const ALLOWED_NEARBY_ACTIVITY_RADII =
+    [
+        0,
+        3,
+        5,
+        10,
+    ];
+
+let nearbyActivityRadius =
+    0;
+
+let nearbyActivitiesApi =
+    null;
+
+const normaliseNearbyActivityRadius =
+    (value) => {
+        const radius =
+            Number(value);
+
+        return ALLOWED_NEARBY_ACTIVITY_RADII
+            .includes(radius)
+                ? radius
+                : 0;
+    };
+
+const isMainActivitiesFilterScreen =
+    (props) => {
+        const routeObject =
+            String(
+                props
+                    ?.route
+                    ?.params
+                    ?.item
+                    ?.object ||
+                ''
+            )
+                .trim()
+                .toLowerCase();
+
+        const filterType =
+            String(
+                props
+                    ?.filterType ||
+                ''
+            )
+                .trim()
+                .toLowerCase();
+
+        if (routeObject) {
+            return (
+                routeObject ===
+                    'activity' ||
+                routeObject ===
+                    'activities'
+            );
+        }
+
+        return (
+            filterType ===
+                'activity' ||
+            filterType ===
+                'activities'
+        );
+    };
+
+const NearbyActivityRadiusFilter =
+    (props) => {
+        const dispatch =
+            useDispatch();
+
+        const [
+            selectedRadius,
+            setSelectedRadius,
+        ] = useState(
+            nearbyActivityRadius
+        );
+
+        const [
+            preferenceLoaded,
+            setPreferenceLoaded,
+        ] = useState(false);
+
+        const currentFilter =
+            props?.filter ||
+            'all';
+
+        const currentSubFilters =
+            props
+                ?.activeSubFilters ||
+            '';
+
+        const isActivitiesScreen =
+            isMainActivitiesFilterScreen(
+                props
+            );
+
+        const refreshActivities =
+            useCallback(
+                () => {
+                    dispatch(
+                        activitiesRequested(
+                            currentFilter,
+                            currentSubFilters,
+                            true,
+                            ''
+                        )
+                    );
+                },
+                [
+                    currentFilter,
+                    currentSubFilters,
+                    dispatch,
+                ]
+            );
+
+        useEffect(
+            () => {
+                if (!isActivitiesScreen) {
+                    return undefined;
+                }
+
+                let cancelled =
+                    false;
+
+                const loadPreference =
+                    async () => {
+                        let storedRadius =
+                            0;
+
+                        try {
+                            storedRadius =
+                                normaliseNearbyActivityRadius(
+                                    await AsyncStorage
+                                        .getItem(
+                                            NEARBY_ACTIVITY_RADIUS_KEY
+                                        )
+                                );
+                        } catch (error) {
+                            storedRadius =
+                                0;
+                        }
+
+                        if (cancelled) {
+                            return;
+                        }
+
+                        const radiusChanged =
+                            storedRadius !==
+                            nearbyActivityRadius;
+
+                        nearbyActivityRadius =
+                            storedRadius;
+
+                        setSelectedRadius(
+                            storedRadius
+                        );
+
+                        setPreferenceLoaded(
+                            true
+                        );
+
+                        /*
+                         The Activity Feed may have started its first request
+                         before AsyncStorage finished loading. Refresh once
+                         only when a non-default saved radius has just been
+                         restored.
+                        */
+                        if (
+                            radiusChanged &&
+                            storedRadius >
+                                0
+                        ) {
+                            refreshActivities();
+                        }
+                    };
+
+                loadPreference();
+
+                return () => {
+                    cancelled =
+                        true;
+                };
+            },
+            [
+                isActivitiesScreen,
+                refreshActivities,
+            ]
+        );
+
+        const selectRadius =
+            useCallback(
+                (radiusValue) => {
+                    const radius =
+                        normaliseNearbyActivityRadius(
+                            radiusValue
+                        );
+
+                    nearbyActivityRadius =
+                        radius;
+
+                    setSelectedRadius(
+                        radius
+                    );
+
+                    AsyncStorage
+                        .setItem(
+                            NEARBY_ACTIVITY_RADIUS_KEY,
+                            String(radius)
+                        )
+                        .catch(
+                            () => {}
+                        );
+
+                    refreshActivities();
+                },
+                [
+                    refreshActivities,
+                ]
+            );
+
+        if (!isActivitiesScreen) {
+            return null;
+        }
+
+        const options =
+            [
+                {
+                    value:
+                        0,
+
+                    label:
+                        'All areas',
+                },
+                {
+                    value:
+                        3,
+
+                    label:
+                        '3 miles',
+                },
+                {
+                    value:
+                        5,
+
+                    label:
+                        '5 miles',
+                },
+                {
+                    value:
+                        10,
+
+                    label:
+                        '10 miles',
+                },
+            ];
+
+        return (
+            <View
+                style={
+                    styles
+                        .nearbyActivityContainer
+                }
+            >
+                <Text
+                    style={
+                        styles
+                            .nearbyActivityHeading
+                    }
+                >
+                    Show posts from members near you
+                </Text>
+
+                <ScrollView
+                    horizontal={true}
+                    showsHorizontalScrollIndicator={
+                        false
+                    }
+                    contentContainerStyle={
+                        styles
+                            .nearbyActivityOptions
+                    }
+                >
+                    {options.map(
+                        (option) => {
+                            const selected =
+                                selectedRadius ===
+                                option.value;
+
+                            return (
+                                <TouchableOpacity
+                                    key={
+                                        String(
+                                            option.value
+                                        )
+                                    }
+                                    accessibilityRole="button"
+                                    accessibilityState={{
+                                        selected:
+                                            selected,
+                                    }}
+                                    disabled={
+                                        !preferenceLoaded
+                                    }
+                                    onPress={
+                                        () =>
+                                            selectRadius(
+                                                option.value
+                                            )
+                                    }
+                                    style={[
+                                        styles
+                                            .nearbyActivityOption,
+                                        selected
+                                            ? styles
+                                                  .nearbyActivityOptionSelected
+                                            : null,
+                                        !preferenceLoaded
+                                            ? styles
+                                                  .nearbyActivityOptionDisabled
+                                            : null,
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles
+                                                .nearbyActivityOptionText,
+                                            selected
+                                                ? styles
+                                                      .nearbyActivityOptionTextSelected
+                                                : null,
+                                        ]}
+                                    >
+                                        {
+                                            option.label
+                                        }
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        }
+                    )}
+                </ScrollView>
+
+                <Text
+                    style={
+                        styles
+                            .nearbyActivityNote
+                    }
+                >
+                    Based on your saved postcode. Distances may be approximate.
+                </Text>
+            </View>
+        );
+    };
+
 
 const markLocationIntroSeenShared =
     async () => {
@@ -3734,6 +4099,101 @@ const styles = StyleSheet.create({
             'center',
         marginTop: 16,
     },
+
+    nearbyActivityContainer: {
+        backgroundColor:
+            '#ffffff',
+        borderTopWidth:
+            StyleSheet.hairlineWidth,
+        borderBottomWidth:
+            StyleSheet.hairlineWidth,
+        borderColor:
+            '#e5e7eb',
+        paddingTop:
+            12,
+        paddingBottom:
+            10,
+    },
+
+    nearbyActivityHeading: {
+        color:
+            '#261e8c',
+        fontSize:
+            15,
+        fontWeight:
+            '700',
+        paddingHorizontal:
+            16,
+        marginBottom:
+            9,
+    },
+
+    nearbyActivityOptions: {
+        paddingHorizontal:
+            12,
+        paddingBottom:
+            4,
+    },
+
+    nearbyActivityOption: {
+        minHeight:
+            38,
+        justifyContent:
+            'center',
+        alignItems:
+            'center',
+        borderRadius:
+            19,
+        borderWidth:
+            1,
+        borderColor:
+            '#d6d6dc',
+        backgroundColor:
+            '#ffffff',
+        paddingHorizontal:
+            16,
+        marginHorizontal:
+            4,
+    },
+
+    nearbyActivityOptionSelected: {
+        borderColor:
+            '#d622a6',
+        backgroundColor:
+            '#d622a6',
+    },
+
+    nearbyActivityOptionDisabled: {
+        opacity:
+            0.55,
+    },
+
+    nearbyActivityOptionText: {
+        color:
+            '#3f3f46',
+        fontSize:
+            14,
+        fontWeight:
+            '600',
+    },
+
+    nearbyActivityOptionTextSelected: {
+        color:
+            '#ffffff',
+    },
+
+    nearbyActivityNote: {
+        color:
+            '#71717a',
+        fontSize:
+            12,
+        lineHeight:
+            17,
+        paddingHorizontal:
+            16,
+        marginTop:
+            5,
+    },
 });
 
 export const applyCustomCode = (
@@ -3754,6 +4214,63 @@ export const applyCustomCode = (
     const activitiesApi =
         externalCodeSetup
             ?.activitiesScreenApi;
+
+    nearbyActivitiesApi =
+        activitiesApi;
+
+    if (
+        activitiesApi &&
+        typeof activitiesApi
+            .setFetchParamsFilter ===
+            'function'
+    ) {
+        /*
+         BuddyBoss applies this function to the initial Activity request,
+         pull-to-refresh and subsequent pagination requests.
+        */
+        activitiesApi
+            .setFetchParamsFilter(
+                (params) => {
+                    const nextParams = {
+                        ...params,
+                    };
+
+                    if (
+                        nearbyActivityRadius >
+                        0
+                    ) {
+                        nextParams
+                            .skedoggle_radius =
+                            nearbyActivityRadius;
+                    } else {
+                        delete nextParams
+                            .skedoggle_radius;
+                    }
+
+                    return nextParams;
+                }
+            );
+    }
+
+    const filterScreenApi =
+        externalCodeSetup
+            ?.filterScreenApiHooks;
+
+    if (
+        filterScreenApi &&
+        typeof filterScreenApi
+            .setAfterFilterComponent ===
+            'function'
+    ) {
+        /*
+         Add the selector below BuddyBoss's existing filter row. This does not
+         replace the activity composer, list header or built-in filters.
+        */
+        filterScreenApi
+            .setAfterFilterComponent(
+                NearbyActivityRadiusFilter
+            );
+    }
 
     if (
         activitiesApi &&
