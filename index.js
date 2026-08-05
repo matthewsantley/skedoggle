@@ -4250,8 +4250,6 @@ const styles = StyleSheet.create({
             15,
         fontWeight:
             '700',
-        textAlign:
-            'center',
         paddingHorizontal:
             16,
         marginBottom:
@@ -4319,8 +4317,6 @@ const styles = StyleSheet.create({
             12,
         lineHeight:
             17,
-        textAlign:
-            'center',
         paddingHorizontal:
             16,
         marginTop:
