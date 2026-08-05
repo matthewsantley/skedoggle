@@ -87,9 +87,7 @@ let nearbyActivityRefreshContext = {
 
     /*
      BuddyBoss activitiesRequested() expects the subfilter argument to be an
-     object, for example {type: 'activity_update'}. Keep this value consistently
-     typed as an object so the app build's JavaScript/type validation does not
-     see a string/object conflict.
+     object, for example {type: 'activity_update'}.
     */
     subfilters:
         {},
@@ -97,6 +95,76 @@ let nearbyActivityRefreshContext = {
     searchTerm:
         '',
 };
+
+/*
+ BuddyBoss topic selections and some other Activity Feed filters are supplied
+ as extra REST parameters rather than through the four activitiesRequested()
+ arguments. Keep the complete latest non-pagination parameter set so an
+ automatic radius refresh can reproduce the same request as a manual refresh.
+*/
+let nearbyActivityStickyFetchParams =
+    {};
+
+let nearbyActivityAutomaticRefreshPending =
+    false;
+
+const nearbyActivityNonStickyParamNames =
+    new Set([
+        'page',
+        'per_page',
+        'offset',
+        'after',
+        'before',
+        'order',
+        'orderby',
+        'count_total',
+        'refresh',
+        'cache',
+        'cache_bust',
+        '_',
+        'skedoggle_radius',
+        'skedoggle_radius_generation',
+    ]);
+
+const captureNearbyActivityStickyParams =
+    (params) => {
+        const stickyParams =
+            {};
+
+        Object
+            .keys(
+                params ||
+                    {}
+            )
+            .forEach(
+                (key) => {
+                    if (
+                        nearbyActivityNonStickyParamNames
+                            .has(key)
+                    ) {
+                        return;
+                    }
+
+                    const value =
+                        params[key];
+
+                    if (
+                        value ===
+                            undefined ||
+                        value ===
+                            null
+                    ) {
+                        return;
+                    }
+
+                    stickyParams[key] =
+                        value;
+                }
+            );
+
+        nearbyActivityStickyFetchParams =
+            stickyParams;
+    };
 
 const normaliseNearbyActivityRadius =
     (value) => {
@@ -280,6 +348,9 @@ const NearbyActivityRadiusFilter =
                             storedRadius >
                                 0
                         ) {
+                            nearbyActivityAutomaticRefreshPending =
+                                true;
+
                             refreshActivities();
                         }
                     };
@@ -323,6 +394,9 @@ const NearbyActivityRadiusFilter =
                         .catch(
                             () => {}
                         );
+
+                    nearbyActivityAutomaticRefreshPending =
+                        true;
 
                     setTimeout(
                         refreshActivities,
@@ -4281,20 +4355,43 @@ export const applyCustomCode = (
         activitiesApi
             .setFetchParamsFilter(
                 (params) => {
-                    const nextParams = {
-                        ...params,
+                    const incomingParams = {
+                        ...(
+                            params ||
+                            {}
+                        ),
                     };
 
                     /*
-                     Keep enough of BuddyBoss's current request context to
-                     refresh the same built-in scope/search when the member
-                     changes the distance.
+                     A normal BuddyBoss request—filter change, topic change,
+                     search, manual refresh or pagination—contains the real
+                     current filter state. Capture all non-pagination values.
+
+                     A Skedoggle automatic radius refresh starts from the
+                     action's basic params, then restores the full latest
+                     BuddyBoss filter set. This retains topic IDs and any other
+                     filters that are not represented by activitiesRequested().
                     */
+                    const nextParams =
+                        nearbyActivityAutomaticRefreshPending
+                            ? {
+                                  ...incomingParams,
+                                  ...nearbyActivityStickyFetchParams,
+                              }
+                            : incomingParams;
+
+                    nearbyActivityAutomaticRefreshPending =
+                        false;
+
+                    captureNearbyActivityStickyParams(
+                        nextParams
+                    );
+
                     const requestedFilter =
                         String(
-                            params
+                            nextParams
                                 ?.scope ||
-                            params
+                            nextParams
                                 ?.filter ||
                             ''
                         )
@@ -4311,19 +4408,19 @@ export const applyCustomCode = (
                             .prototype
                             .hasOwnProperty
                             .call(
-                                params ||
+                                nextParams ||
                                     {},
                                 'type'
                             )
                     ) {
                         nearbyActivityRefreshContext
                             .subfilters =
-                            params.type &&
+                            nextParams.type &&
                             params.type !==
                                 '-1'
                                 ? {
                                       type:
-                                          params.type,
+                                          nextParams.type,
                                   }
                                 : {};
                     }
@@ -4333,14 +4430,14 @@ export const applyCustomCode = (
                             .prototype
                             .hasOwnProperty
                             .call(
-                                params ||
+                                nextParams ||
                                     {},
                                 'search'
                             )
                     ) {
                         nearbyActivityRefreshContext
                             .searchTerm =
-                            params.search ||
+                            nextParams.search ||
                             '';
                     }
 
