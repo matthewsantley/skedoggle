@@ -19,7 +19,7 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
-import androidx.core.app.ContextCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.app.NotificationCompat;
 
 public class LocationForegroundService
