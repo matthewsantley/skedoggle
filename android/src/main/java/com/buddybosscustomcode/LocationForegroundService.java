@@ -19,8 +19,8 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
-import androidx.core.content.ContextCompat;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 
 public class LocationForegroundService
         extends Service
@@ -31,6 +31,18 @@ public class LocationForegroundService
 
     public static final String ACTION_STOP =
             "ACTION_STOP";
+
+    public static final String EXTRA_TRACKING_MODE =
+            "tracking_mode";
+
+    public static final String EXTRA_SESSION_ID =
+            "session_id";
+
+    public static final String MODE_WALK =
+            "walk";
+
+    public static final String MODE_SEARCH_PARTY =
+            "search_party";
 
     private static final String TAG =
             "SkedoggleLocation";
@@ -52,22 +64,40 @@ public class LocationForegroundService
             5.0f;
 
     /*
-     Background fixes can be less accurate than foreground fixes.
+     A walk should wait for a reasonably settled first GPS fix instead
+     of accepting the first approximate point Android happens to supply.
+    */
+    private static final float INITIAL_MAX_ACCURACY_METRES =
+            25.0f;
+
+    /*
+     Once tracking is established, allow a little more variation for
+     trees/buildings while still rejecting poor route points.
     */
     private static final float MAX_ACCURACY_METRES =
-            100.0f;
+            40.0f;
 
     /*
-     Approximately 30 mph / 48 km/h.
+     Search Party can fall back to NETWORK_PROVIDER only when GPS is
+     unavailable. Keep that fallback tighter than the old 100m limit.
+    */
+    private static final float SEARCH_NETWORK_MAX_ACCURACY_METRES =
+            50.0f;
+
+    /*
+     6.5 m/s is about 14.5 mph / 23.4 km/h. This is deliberately
+     generous for a dog walk or run while being far below the old
+     30 mph threshold.
     */
     private static final double MAX_SPEED_METRES_PER_SECOND =
-            13.5;
+            6.5;
 
     /*
-     Only compare movement speed across relatively close readings.
+     Very small movements are usually normal GPS jitter and add no
+     useful route detail.
     */
-    private static final double MAX_FILTER_GAP_SECONDS =
-            60.0;
+    private static final float MIN_MEANINGFUL_MOVE_METRES =
+            2.0f;
 
     private LocationManager locationManager;
 
@@ -76,6 +106,12 @@ public class LocationForegroundService
     private long trackingStartedElapsedNanos;
 
     private boolean updatesRequested;
+
+    private String trackingMode =
+            MODE_WALK;
+
+    private long sessionId =
+            0L;
 
     @Override
     public void onCreate() {
@@ -112,12 +148,49 @@ public class LocationForegroundService
             return START_NOT_STICKY;
         }
 
+        String requestedMode =
+                normaliseTrackingMode(
+                        intent != null
+                                ? intent.getStringExtra(
+                                        EXTRA_TRACKING_MODE
+                                )
+                                : trackingMode
+                );
+
+        long requestedSessionId =
+                intent != null
+                        ? intent.getLongExtra(
+                                EXTRA_SESSION_ID,
+                                0L
+                        )
+                        : sessionId;
+
+        boolean trackingIdentityChanged =
+                !requestedMode.equals(
+                        trackingMode
+                )
+                        || requestedSessionId !=
+                        sessionId;
+
+        trackingMode =
+                requestedMode;
+
+        sessionId =
+                requestedSessionId;
+
         /*
          This also handles a sticky restart where intent is null.
         */
         startForegroundWithNotification();
 
-        if (!updatesRequested) {
+        if (
+                !updatesRequested ||
+                trackingIdentityChanged
+        ) {
+            if (updatesRequested) {
+                stopLocationUpdates();
+            }
+
             lastGoodLocation = null;
 
             trackingStartedElapsedNanos =
@@ -133,29 +206,36 @@ public class LocationForegroundService
     private void startForegroundWithNotification() {
         createNotificationChannel();
 
+        String notificationText =
+                MODE_SEARCH_PARTY.equals(
+                        trackingMode
+                )
+                        ? "Sharing your Search Party position…"
+                        : "Tracking your walk…";
+
         Notification notification =
                 new NotificationCompat.Builder(
                         this,
                         CHANNEL_ID
                 )
-                .setContentTitle(
-                        "Skedoggle Walk Tracker"
-                )
-                .setContentText(
-                        "Tracking your walk…"
-                )
-                .setSmallIcon(
-                        android.R.drawable.ic_menu_mylocation
-                )
-                .setPriority(
-                        NotificationCompat.PRIORITY_LOW
-                )
-                .setCategory(
-                        NotificationCompat.CATEGORY_SERVICE
-                )
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build();
+                        .setContentTitle(
+                                "Skedoggle"
+                        )
+                        .setContentText(
+                                notificationText
+                        )
+                        .setSmallIcon(
+                                android.R.drawable.ic_menu_mylocation
+                        )
+                        .setPriority(
+                                NotificationCompat.PRIORITY_LOW
+                        )
+                        .setCategory(
+                                NotificationCompat.CATEGORY_SERVICE
+                        )
+                        .setOngoing(true)
+                        .setOnlyAlertOnce(true)
+                        .build();
 
         int foregroundServiceType = 0;
 
@@ -197,20 +277,11 @@ public class LocationForegroundService
         );
     }
 
-    private boolean hasLocationPermission() {
-        boolean fineGranted =
-                ContextCompat.checkSelfPermission(
-                        this,
-                        Manifest.permission.ACCESS_FINE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED;
-
-        boolean coarseGranted =
-                ContextCompat.checkSelfPermission(
-                        this,
-                        Manifest.permission.ACCESS_COARSE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED;
-
-        return fineGranted || coarseGranted;
+    private boolean hasFineLocationPermission() {
+        return ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void startLocationUpdates() {
@@ -224,10 +295,15 @@ public class LocationForegroundService
             return;
         }
 
-        if (!hasLocationPermission()) {
+        /*
+         Route tracking needs precise location. Starting with only coarse
+         permission creates exactly the kind of jumps this service is meant
+         to prevent.
+        */
+        if (!hasFineLocationPermission()) {
             Log.e(
                     TAG,
-                    "Location permission has not been granted"
+                    "Precise location permission has not been granted"
             );
 
             stopTrackingService();
@@ -237,11 +313,15 @@ public class LocationForegroundService
         try {
             locationManager.removeUpdates(this);
 
-            boolean providerRegistered = false;
+            boolean providerRegistered =
+                    false;
 
-            if (locationManager.isProviderEnabled(
-                    LocationManager.GPS_PROVIDER
-            )) {
+            boolean gpsEnabled =
+                    locationManager.isProviderEnabled(
+                            LocationManager.GPS_PROVIDER
+                    );
+
+            if (gpsEnabled) {
                 locationManager.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
                         MIN_TIME_MS,
@@ -249,17 +329,27 @@ public class LocationForegroundService
                         this
                 );
 
-                providerRegistered = true;
+                providerRegistered =
+                        true;
 
                 Log.i(
                         TAG,
                         "GPS location provider registered"
                 );
-            }
 
-            if (locationManager.isProviderEnabled(
-                    LocationManager.NETWORK_PROVIDER
-            )) {
+            } else if (
+                    MODE_SEARCH_PARTY.equals(
+                            trackingMode
+                    )
+                            && locationManager.isProviderEnabled(
+                            LocationManager.NETWORK_PROVIDER
+                    )
+            ) {
+                /*
+                 Search Party gets a limited network fallback so a participant
+                 can still be visible if GPS is temporarily unavailable.
+                 Walk Tracking never mixes GPS and network-provider points.
+                */
                 locationManager.requestLocationUpdates(
                         LocationManager.NETWORK_PROVIDER,
                         MIN_TIME_MS,
@@ -267,25 +357,27 @@ public class LocationForegroundService
                         this
                 );
 
-                providerRegistered = true;
+                providerRegistered =
+                        true;
 
-                Log.i(
+                Log.w(
                         TAG,
-                        "Network location provider registered"
+                        "Search Party using network location because GPS is unavailable"
                 );
             }
 
             if (!providerRegistered) {
                 Log.e(
                         TAG,
-                        "No location provider is enabled"
+                        "No suitable precise location provider is enabled"
                 );
 
                 stopTrackingService();
                 return;
             }
 
-            updatesRequested = true;
+            updatesRequested =
+                    true;
 
         } catch (SecurityException exception) {
             Log.e(
@@ -320,9 +412,14 @@ public class LocationForegroundService
             );
         }
 
-        updatesRequested = false;
-        lastGoodLocation = null;
-        trackingStartedElapsedNanos = 0L;
+        updatesRequested =
+                false;
+
+        lastGoodLocation =
+                null;
+
+        trackingStartedElapsedNanos =
+                0L;
     }
 
     private void stopTrackingService() {
@@ -360,6 +457,33 @@ public class LocationForegroundService
             return;
         }
 
+        String provider =
+                location.getProvider() != null
+                        ? location.getProvider()
+                        : "";
+
+        /*
+         Walk Tracking is deliberately GPS-only. In the previous version,
+         interleaving GPS and NETWORK_PROVIDER readings was a major source of
+         route jumps.
+        */
+        if (
+                MODE_WALK.equals(
+                        trackingMode
+                )
+                        && !LocationManager.GPS_PROVIDER.equals(
+                        provider
+                )
+        ) {
+            Log.d(
+                    TAG,
+                    "Rejected non-GPS walk point from provider="
+                            + provider
+            );
+
+            return;
+        }
+
         if (!location.hasAccuracy()) {
             Log.d(
                     TAG,
@@ -372,10 +496,31 @@ public class LocationForegroundService
         float accuracy =
                 location.getAccuracy();
 
+        float maximumAccuracy =
+                lastGoodLocation == null
+                        ? INITIAL_MAX_ACCURACY_METRES
+                        : MAX_ACCURACY_METRES;
+
+        if (
+                MODE_SEARCH_PARTY.equals(
+                        trackingMode
+                )
+                        && LocationManager.NETWORK_PROVIDER.equals(
+                        provider
+                )
+        ) {
+            maximumAccuracy =
+                    SEARCH_NETWORK_MAX_ACCURACY_METRES;
+        }
+
         Log.d(
                 TAG,
-                "Raw point: provider="
-                        + location.getProvider()
+                "Raw point: mode="
+                        + trackingMode
+                        + " session="
+                        + sessionId
+                        + " provider="
+                        + provider
                         + " lat="
                         + location.getLatitude()
                         + " lng="
@@ -384,14 +529,16 @@ public class LocationForegroundService
                         + accuracy
         );
 
-        if (accuracy < 0
-                || accuracy > MAX_ACCURACY_METRES) {
-
+        if (
+                accuracy < 0
+                        || accuracy > maximumAccuracy
+        ) {
             Log.d(
                     TAG,
                     "Rejected inaccurate point: "
                             + accuracy
-                            + " metres"
+                            + " metres; limit="
+                            + maximumAccuracy
             );
 
             return;
@@ -447,59 +594,84 @@ public class LocationForegroundService
                             location
                     );
 
-            if (differenceSeconds
-                    <= MAX_FILTER_GAP_SECONDS) {
+            if (
+                    distanceMetres <
+                            MIN_MEANINGFUL_MOVE_METRES
+            ) {
+                Log.d(
+                        TAG,
+                        "Rejected GPS jitter: distance="
+                                + distanceMetres
+                                + "m"
+                );
 
-                double accuracyAllowance =
-                        Math.max(
-                                30.0,
-                                location.getAccuracy()
-                                        + lastGoodLocation
-                                        .getAccuracy()
-                        );
+                return;
+            }
 
-                double maximumAllowedDistance =
-                        (
-                            MAX_SPEED_METRES_PER_SECOND
-                                    * differenceSeconds
-                        )
-                        + accuracyAllowance;
-
-                if (distanceMetres
-                        > maximumAllowedDistance) {
-
-                    Log.w(
-                            TAG,
-                            "Rejected GPS spike: distance="
-                                    + distanceMetres
-                                    + "m time="
-                                    + differenceSeconds
-                                    + "s allowed="
-                                    + maximumAllowedDistance
-                                    + "m"
+            /*
+             Do not disable spike filtering after a long gap. The old code
+             stopped checking after 60 seconds, which could allow a large
+             jump immediately after Android resumed GPS delivery.
+            */
+            double accuracyAllowance =
+                    Math.max(
+                            15.0,
+                            Math.min(
+                                    40.0,
+                                    Math.max(
+                                            location.getAccuracy(),
+                                            lastGoodLocation
+                                                    .getAccuracy()
+                                    )
+                            )
                     );
 
-                    return;
-                }
+            double maximumAllowedDistance =
+                    (
+                            MAX_SPEED_METRES_PER_SECOND
+                                    * differenceSeconds
+                    )
+                            + accuracyAllowance;
+
+            if (distanceMetres
+                    > maximumAllowedDistance) {
+
+                Log.w(
+                        TAG,
+                        "Rejected GPS spike: distance="
+                                + distanceMetres
+                                + "m time="
+                                + differenceSeconds
+                                + "s allowed="
+                                + maximumAllowedDistance
+                                + "m provider="
+                                + provider
+                );
+
+                return;
             }
         }
 
         lastGoodLocation =
-                new Location(location);
+                new Location(
+                        location
+                );
 
         long timestamp =
                 location.getTime();
 
         /*
-         Save first. If React Native is asleep while the screen is
-         locked, this point remains available for replay after unlock.
+         Save first. If React Native is asleep while the screen is locked,
+         this point remains available for replay after unlock.
         */
         LocationBuffer.addLocation(
                 getApplicationContext(),
                 location.getLatitude(),
                 location.getLongitude(),
                 timestamp,
-                location.getAccuracy()
+                location.getAccuracy(),
+                trackingMode,
+                sessionId
         );
 
         boolean emitted =
@@ -508,12 +680,18 @@ public class LocationForegroundService
                                 location.getLatitude(),
                                 location.getLongitude(),
                                 timestamp,
-                                location.getAccuracy()
+                                location.getAccuracy(),
+                                trackingMode,
+                                sessionId
                         );
 
         Log.i(
                 TAG,
-                "Accepted and buffered point: lat="
+                "Accepted and buffered point: mode="
+                        + trackingMode
+                        + " session="
+                        + sessionId
+                        + " lat="
                         + location.getLatitude()
                         + " lng="
                         + location.getLongitude()
@@ -538,6 +716,20 @@ public class LocationForegroundService
         */
         return location.getTime()
                 * 1_000_000L;
+    }
+
+    private String normaliseTrackingMode(
+            String value
+    ) {
+        if (
+                MODE_SEARCH_PARTY.equals(
+                        value
+                )
+        ) {
+            return MODE_SEARCH_PARTY;
+        }
+
+        return MODE_WALK;
     }
 
     @Override
@@ -584,7 +776,7 @@ public class LocationForegroundService
                     );
 
             channel.setDescription(
-                    "Shows when Skedoggle is recording a walk"
+                    "Shows when Skedoggle is using location in the background"
             );
 
             channel.setShowBadge(false);
