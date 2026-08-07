@@ -48,6 +48,13 @@ const SEARCH_PARTY_POSITION_URL =
 let installed = false;
 
 /*
+ BuddyBoss root navigation object. This is captured through the supported
+ navigationApi callback so components mounted outside the normal navigation
+ prop tree can still open native BuddyBoss screens.
+*/
+let buddyBossRootNavigation = null;
+
+/*
  The PageScreen WebView forwards Search Party messages to the currently
  mounted SearchPartyNativeSidecar through this small shared callback.
 */
@@ -61,9 +68,6 @@ const LOCATION_INTRO_COOKIE_NAME =
 
 const NEARBY_ACTIVITY_RADIUS_KEY =
     'skedoggle_nearby_activity_radius_v1';
-
-const MEMBER_PROFILE_EDIT_URL =
-    'https://skedoggle.com/members/me/profile/edit/';
 
 const ALLOWED_NEARBY_ACTIVITY_RADII =
     [
@@ -374,18 +378,38 @@ const NearbyActivityRadiusFilter =
         const openPostcodeProfile =
             useCallback(
                 () => {
-                    Linking
-                        .openURL(
-                            MEMBER_PROFILE_EDIT_URL
-                        )
-                        .catch(
-                            () => {
-                                Alert.alert(
-                                    'Could not open profile',
-                                    'Please open your profile from the app menu to edit your postcode.'
-                                );
-                            }
-                        );
+                    const navigation =
+                        buddyBossRootNavigation
+                            ?.navigation ||
+                        buddyBossRootNavigation;
+
+                    if (
+                        navigation &&
+                        typeof navigation.navigate ===
+                            'function'
+                    ) {
+                        try {
+                            /*
+                             EditXprofile is BuddyBoss's native Edit Profile
+                             screen. Opening it keeps the member inside the app.
+                            */
+                            navigation.navigate(
+                                'EditXprofile'
+                            );
+
+                            return;
+                        } catch (error) {
+                            /*
+                             Fall through to the friendly message below rather
+                             than opening an external browser.
+                            */
+                        }
+                    }
+
+                    Alert.alert(
+                        'Could not open profile',
+                        'Please open your Profile in the app and choose Edit Profile to update your postcode.'
+                    );
                 },
                 []
             );
@@ -482,6 +506,28 @@ const NearbyActivityRadiusFilter =
                     Show posts from members near you
                 </Text>
 
+                <Text
+                    style={
+                        styles
+                            .nearbyActivityNote
+                    }
+                >
+                    {'Based on your saved '}
+                    <Text
+                        accessibilityRole="link"
+                        onPress={
+                            openPostcodeProfile
+                        }
+                        style={
+                            styles
+                                .nearbyActivityPostcodeLink
+                        }
+                    >
+                        postcode
+                    </Text>
+                    {'.'}
+                </Text>
+
                 <ScrollView
                     horizontal={true}
                     showsHorizontalScrollIndicator={
@@ -551,28 +597,6 @@ const NearbyActivityRadiusFilter =
                         }
                     )}
                 </ScrollView>
-
-                <Text
-                    style={
-                        styles
-                            .nearbyActivityNote
-                    }
-                >
-                    {'Based on your saved '}
-                    <Text
-                        accessibilityRole="link"
-                        onPress={
-                            openPostcodeProfile
-                        }
-                        style={
-                            styles
-                                .nearbyActivityPostcodeLink
-                        }
-                    >
-                        postcode
-                    </Text>
-                    {'.'}
-                </Text>
             </View>
         );
     };
@@ -4359,7 +4383,9 @@ const styles = StyleSheet.create({
         paddingHorizontal:
             16,
         marginTop:
-            5,
+            0,
+        marginBottom:
+            8,
     },
 
     nearbyActivityPostcodeLink: {
@@ -4380,6 +4406,25 @@ export const applyCustomCode = (
     }
 
     installed = true;
+
+    const navigationApi =
+        externalCodeSetup
+            ?.navigationApi;
+
+    if (
+        navigationApi &&
+        typeof navigationApi
+            .addNavigatorCreatedCallback ===
+            'function'
+    ) {
+        navigationApi
+            .addNavigatorCreatedCallback(
+                (navigator) => {
+                    buddyBossRootNavigation =
+                        navigator;
+                }
+            );
+    }
 
     /*
      Daily Woof is BuddyBoss's native Activity Feed screen, not a WordPress
