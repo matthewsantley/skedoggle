@@ -2948,6 +2948,38 @@ const WalkNativeSidecar = ({
                         (
                             location
                         ) => {
+                            if (
+                                Platform.OS ===
+                                    'android'
+                            ) {
+                                /*
+                                 Android saves every accepted native point to
+                                 LocationBuffer before emitting this event.
+
+                                 Do not upload the newly emitted point by itself:
+                                 immediately after unlocking it can otherwise
+                                 overtake older locked-screen points that are
+                                 still waiting in the native buffer, creating a
+                                 straight last-unlocked -> first-unlocked line.
+
+                                 Treat the event as a prompt to flush the whole
+                                 buffer, which uploadPoints() sorts by timestamp
+                                 before sending it to the bridge.
+                                */
+                                if (
+                                    appStateRef
+                                        .current ===
+                                    'active'
+                                ) {
+                                    flushBufferedPoints();
+                                }
+
+                                return;
+                            }
+
+                            /*
+                             Preserve the existing stable iOS behaviour.
+                            */
                             uploadPoints([
                                 location,
                             ]);
@@ -2973,6 +3005,7 @@ const WalkNativeSidecar = ({
             };
         },
         [
+            flushBufferedPoints,
             uploadPoints,
         ]
     );
@@ -3002,10 +3035,26 @@ const WalkNativeSidecar = ({
                                     'inactive'
                             )
                         ) {
-                            setTimeout(
-                                flushBufferedPoints,
-                                750
-                            );
+                            if (
+                                Platform.OS ===
+                                    'android'
+                            ) {
+                                /*
+                                 Flush immediately on Android. The service has
+                                 already buffered the locked-screen route, so
+                                 waiting here gives a fresh unlock location a
+                                 chance to arrive first.
+                                */
+                                flushBufferedPoints();
+                            } else {
+                                /*
+                                 Keep the existing iOS timing unchanged.
+                                */
+                                setTimeout(
+                                    flushBufferedPoints,
+                                    750
+                                );
+                            }
                         }
                     }
                 );
