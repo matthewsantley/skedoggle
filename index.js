@@ -4557,25 +4557,31 @@ export const applyCustomCode = (
             );
     }
 
+    /*
+     Mount the Skedoggle nearby controls directly below BuddyBoss's filter
+     row instead of attaching them to the first Activity item.
+
+     This is important when a legitimate 3/5/10-mile search returns zero
+     posts: the filter row still exists even though there is no first item
+     and BuddyBoss/Adonis may not render a custom ListEmptyComponent.
+    */
+    const filterScreenApi =
+        externalCodeSetup
+            ?.filterScreenApiHooks;
+
     if (
-        activitiesApi &&
-        typeof activitiesApi
-            .setBeforeActivitySingleComponent ===
+        filterScreenApi &&
+        typeof filterScreenApi
+            .setAfterFilterComponent ===
             'function'
     ) {
-        /*
-         Keep all Skedoggle additions outside BuddyBoss's Activity header.
-         The header remains entirely owned by BuddyBoss, preserving its
-         search bar, create-post composer and built-in filter controls.
-        */
-        activitiesApi
-            .setBeforeActivitySingleComponent(
-                ({
-                    index,
-                }) => {
+        filterScreenApi
+            .setAfterFilterComponent(
+                (props) => {
                     if (
-                        Number(index) !==
-                        0
+                        !isMainActivitiesFilterScreen(
+                            props
+                        )
                     ) {
                         return null;
                     }
@@ -4585,44 +4591,11 @@ export const applyCustomCode = (
                             <DailyWoofLocationIntroduction />
 
                             <NearbyActivityRadiusFilter
-                                forceActivityScreen={
-                                    true
-                                }
+                                {...props}
                             />
                         </View>
                     );
                 }
-            );
-    }
-
-    if (
-        activitiesApi &&
-        typeof activitiesApi
-            .setActivitiesListProps ===
-            'function'
-    ) {
-        /*
-         If a nearby radius returns no activities, there is no first item on
-         which to mount the selector. Supply only ListEmptyComponent so the
-         member can always select All areas again. Never override
-         ListHeaderComponent.
-        */
-        activitiesApi
-            .setActivitiesListProps(
-                () => ({
-                    ListEmptyComponent:
-                        () => (
-                            <View>
-                                <DailyWoofLocationIntroduction />
-
-                                <NearbyActivityRadiusFilter
-                                    forceActivityScreen={
-                                        true
-                                    }
-                                />
-                            </View>
-                        ),
-                })
             );
     }
 
