@@ -39,6 +39,9 @@ public final class LocationBuffer {
     private LocationBuffer() {
     }
 
+    /**
+     * Legacy wrapper retained for compatibility.
+     */
     public static synchronized void addLocation(
             Context context,
             double latitude,
@@ -46,34 +49,92 @@ public final class LocationBuffer {
             long timestamp,
             float accuracy
     ) {
+        addLocation(
+                context,
+                latitude,
+                longitude,
+                timestamp,
+                accuracy,
+                "",
+                0L
+        );
+    }
+
+    public static synchronized void addLocation(
+            Context context,
+            double latitude,
+            double longitude,
+            long timestamp,
+            float accuracy,
+            String trackingMode,
+            long sessionId
+    ) {
         try {
             JSONArray existing =
-                    readArray(context);
+                    readArray(
+                            context
+                    );
 
             JSONArray updated =
                     new JSONArray();
 
-            /*
-             Remove any existing point with the same timestamp before
-             adding the new copy.
-            */
-            for (int index = 0;
-                 index < existing.length();
-                 index++) {
+            String normalisedMode =
+                    normaliseMode(
+                            trackingMode
+                    );
 
+            /*
+             Remove an exact duplicate before adding the new copy. Timestamp
+             alone is not sufficient once Walk and Search Party are buffered
+             independently.
+            */
+            for (
+                    int index = 0;
+                    index < existing.length();
+                    index++
+            ) {
                 JSONObject point =
-                        existing.optJSONObject(index);
+                        existing.optJSONObject(
+                                index
+                        );
 
                 if (point == null) {
                     continue;
                 }
 
-                if (point.optLong("ts", -1L)
-                        == timestamp) {
+                boolean sameTimestamp =
+                        point.optLong(
+                                "ts",
+                                -1L
+                        ) == timestamp;
+
+                boolean sameMode =
+                        normaliseMode(
+                                point.optString(
+                                        "trackingMode",
+                                        ""
+                                )
+                        ).equals(
+                                normalisedMode
+                        );
+
+                boolean sameSession =
+                        point.optLong(
+                                "sessionId",
+                                0L
+                        ) == sessionId;
+
+                if (
+                        sameTimestamp &&
+                        sameMode &&
+                        sameSession
+                ) {
                     continue;
                 }
 
-                updated.put(point);
+                updated.put(
+                        point
+                );
             }
 
             JSONObject point =
@@ -109,7 +170,19 @@ public final class LocationBuffer {
                     true
             );
 
-            updated.put(point);
+            point.put(
+                    "trackingMode",
+                    normalisedMode
+            );
+
+            point.put(
+                    "sessionId",
+                    sessionId
+            );
+
+            updated.put(
+                    point
+            );
 
             /*
              Keep only the newest MAX_POINTS readings.
@@ -122,19 +195,25 @@ public final class LocationBuffer {
                         updated.length()
                                 - MAX_POINTS;
 
-                for (int index = firstIndex;
-                     index < updated.length();
-                     index++) {
-
+                for (
+                        int index = firstIndex;
+                        index < updated.length();
+                        index++
+                ) {
                     JSONObject retained =
-                            updated.optJSONObject(index);
+                            updated.optJSONObject(
+                                    index
+                            );
 
                     if (retained != null) {
-                        trimmed.put(retained);
+                        trimmed.put(
+                                retained
+                        );
                     }
                 }
 
-                updated = trimmed;
+                updated =
+                        trimmed;
             }
 
             saveArray(
@@ -155,7 +234,9 @@ public final class LocationBuffer {
             Context context
     ) {
         JSONArray stored =
-                readArray(context);
+                readArray(
+                        context
+                );
 
         /*
          Return a copy so callers cannot modify the stored instance.
@@ -164,38 +245,222 @@ public final class LocationBuffer {
             return new JSONArray(
                     stored.toString()
             );
+
         } catch (JSONException exception) {
             return new JSONArray();
         }
     }
 
+    /**
+     * Legacy acknowledgement: remove any point with this timestamp.
+     */
     public static synchronized void acknowledgeLocation(
             Context context,
             long timestamp
     ) {
         JSONArray existing =
-                readArray(context);
+                readArray(
+                        context
+                );
 
         JSONArray retained =
                 new JSONArray();
 
-        for (int index = 0;
-             index < existing.length();
-             index++) {
-
+        for (
+                int index = 0;
+                index < existing.length();
+                index++
+        ) {
             JSONObject point =
-                    existing.optJSONObject(index);
+                    existing.optJSONObject(
+                            index
+                    );
 
             if (point == null) {
                 continue;
             }
 
-            if (point.optLong("ts", -1L)
-                    == timestamp) {
+            if (
+                    point.optLong(
+                            "ts",
+                            -1L
+                    ) == timestamp
+            ) {
                 continue;
             }
 
-            retained.put(point);
+            retained.put(
+                    point
+            );
+        }
+
+        saveArray(
+                context,
+                retained
+        );
+    }
+
+    /**
+     * Mode-aware acknowledgement used by the current index.js.
+     */
+    public static synchronized void acknowledgeLocationForMode(
+            Context context,
+            long timestamp,
+            String trackingMode,
+            long sessionId
+    ) {
+        JSONArray existing =
+                readArray(
+                        context
+                );
+
+        JSONArray retained =
+                new JSONArray();
+
+        String normalisedMode =
+                normaliseMode(
+                        trackingMode
+                );
+
+        for (
+                int index = 0;
+                index < existing.length();
+                index++
+        ) {
+            JSONObject point =
+                    existing.optJSONObject(
+                            index
+                    );
+
+            if (point == null) {
+                continue;
+            }
+
+            boolean sameTimestamp =
+                    point.optLong(
+                            "ts",
+                            -1L
+                    ) == timestamp;
+
+            String pointMode =
+                    normaliseMode(
+                            point.optString(
+                                    "trackingMode",
+                                    ""
+                            )
+                    );
+
+            long pointSessionId =
+                    point.optLong(
+                            "sessionId",
+                            0L
+                    );
+
+            boolean sameMode =
+                    pointMode.equals(
+                            normalisedMode
+                    );
+
+            boolean sameSession =
+                    sessionId > 0L
+                            ? pointSessionId ==
+                            sessionId
+                            : pointSessionId ==
+                            0L;
+
+            /*
+             Untagged legacy walk points can still be acknowledged by the
+             Walk sidecar after an upgrade.
+            */
+            boolean legacyWalkMatch =
+                    LocationForegroundService.MODE_WALK.equals(
+                            normalisedMode
+                    )
+                            && sessionId == 0L
+                            && pointMode.length() == 0;
+
+            if (
+                    sameTimestamp &&
+                            (
+                                    (
+                                            sameMode &&
+                                            sameSession
+                                    )
+                                            || legacyWalkMatch
+                            )
+            ) {
+                continue;
+            }
+
+            retained.put(
+                    point
+            );
+        }
+
+        saveArray(
+                context,
+                retained
+        );
+    }
+
+    /**
+     * Remove stale points for a new tracking mode before starting it.
+     *
+     * Untagged points are legacy data from the old Android module. index.js
+     * gets one final chance to flush them before a new session begins; after
+     * that, keeping them risks injecting an old location into a new route.
+     */
+    public static synchronized void clearMode(
+            Context context,
+            String trackingMode
+    ) {
+        JSONArray existing =
+                readArray(
+                        context
+                );
+
+        JSONArray retained =
+                new JSONArray();
+
+        String normalisedMode =
+                normaliseMode(
+                        trackingMode
+                );
+
+        for (
+                int index = 0;
+                index < existing.length();
+                index++
+        ) {
+            JSONObject point =
+                    existing.optJSONObject(
+                            index
+                    );
+
+            if (point == null) {
+                continue;
+            }
+
+            String pointMode =
+                    normaliseMode(
+                            point.optString(
+                                    "trackingMode",
+                                    ""
+                            )
+                    );
+
+            if (
+                    pointMode.length() == 0 ||
+                    pointMode.equals(
+                            normalisedMode
+                    )
+            ) {
+                continue;
+            }
+
+            retained.put(
+                    point
+            );
         }
 
         saveArray(
@@ -207,9 +472,13 @@ public final class LocationBuffer {
     public static synchronized void clear(
             Context context
     ) {
-        getPreferences(context)
+        getPreferences(
+                context
+        )
                 .edit()
-                .remove(KEY_POINTS)
+                .remove(
+                        KEY_POINTS
+                )
                 .apply();
     }
 
@@ -217,7 +486,9 @@ public final class LocationBuffer {
             Context context
     ) {
         String value =
-                getPreferences(context)
+                getPreferences(
+                        context
+                )
                         .getString(
                                 KEY_POINTS,
                                 "[]"
@@ -229,6 +500,7 @@ public final class LocationBuffer {
                             ? value
                             : "[]"
             );
+
         } catch (JSONException exception) {
             Log.e(
                     TAG,
@@ -244,7 +516,9 @@ public final class LocationBuffer {
             Context context,
             JSONArray points
     ) {
-        getPreferences(context)
+        getPreferences(
+                context
+        )
                 .edit()
                 .putString(
                         KEY_POINTS,
@@ -262,5 +536,29 @@ public final class LocationBuffer {
                         PREFERENCES_NAME,
                         Context.MODE_PRIVATE
                 );
+    }
+
+    private static String normaliseMode(
+            String value
+    ) {
+        if (value == null) {
+            return "";
+        }
+
+        String normalised =
+                value.trim();
+
+        if (
+                LocationForegroundService.MODE_WALK.equals(
+                        normalised
+                )
+                        || LocationForegroundService.MODE_SEARCH_PARTY.equals(
+                        normalised
+                )
+        ) {
+            return normalised;
+        }
+
+        return "";
     }
 }
