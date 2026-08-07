@@ -49,19 +49,43 @@ public class BuddybossCustomCodeModule
     */
     private static ReactApplicationContext reactAppContext;
 
-    private int listenerCount = 0;
+    private int listenerCount =
+            0;
 
     public BuddybossCustomCodeModule(
             ReactApplicationContext reactContext
     ) {
-        super(reactContext);
-        reactAppContext = reactContext;
+        super(
+                reactContext
+        );
+
+        reactAppContext =
+                reactContext;
     }
 
     @Override
     @NonNull
     public String getName() {
         return NAME;
+    }
+
+    /**
+     * Legacy wrapper retained for compatibility with older service code.
+     */
+    public static boolean onLocationUpdate(
+            double latitude,
+            double longitude,
+            long timestamp,
+            float accuracy
+    ) {
+        return onLocationUpdate(
+                latitude,
+                longitude,
+                timestamp,
+                accuracy,
+                "",
+                0L
+        );
     }
 
     /**
@@ -75,7 +99,9 @@ public class BuddybossCustomCodeModule
             double latitude,
             double longitude,
             long timestamp,
-            float accuracy
+            float accuracy,
+            String trackingMode,
+            long sessionId
     ) {
         try {
             ReactApplicationContext context =
@@ -132,6 +158,18 @@ public class BuddybossCustomCodeModule
                     true
             );
 
+            point.putString(
+                    "trackingMode",
+                    trackingMode != null
+                            ? trackingMode
+                            : ""
+            );
+
+            point.putDouble(
+                    "sessionId",
+                    sessionId
+            );
+
             context
                     .getJSModule(
                             DeviceEventManagerModule
@@ -155,8 +193,61 @@ public class BuddybossCustomCodeModule
         }
     }
 
+    /**
+     * Existing Walk Tracker API. Kept unchanged for index.js compatibility.
+     */
     @ReactMethod
     public void startBackgroundTracking(
+            Promise promise
+    ) {
+        startTrackingInternal(
+                LocationForegroundService.MODE_WALK,
+                0L,
+                promise
+        );
+    }
+
+    /**
+     * Mode-aware API already supported by the current index.js.
+     */
+    @ReactMethod
+    public void startBackgroundTrackingForMode(
+            String trackingMode,
+            double sessionId,
+            Promise promise
+    ) {
+        startTrackingInternal(
+                normaliseTrackingMode(
+                        trackingMode
+                ),
+                (long) sessionId,
+                promise
+        );
+    }
+
+    /**
+     * Search Party convenience API already checked by current index.js.
+     *
+     * userId/token remain in JavaScript where the HTTPS upload occurs;
+     * the native service only needs the Search Party session identity.
+     */
+    @ReactMethod
+    public void startSearchPartyTracking(
+            double sessionId,
+            double userId,
+            String token,
+            Promise promise
+    ) {
+        startTrackingInternal(
+                LocationForegroundService.MODE_SEARCH_PARTY,
+                (long) sessionId,
+                promise
+        );
+    }
+
+    private void startTrackingInternal(
+            String trackingMode,
+            long sessionId,
             Promise promise
     ) {
         try {
@@ -175,14 +266,28 @@ public class BuddybossCustomCodeModule
                             Manifest.permission.ACCESS_COARSE_LOCATION
                     ) == PackageManager.PERMISSION_GRANTED;
 
-            if (!fineGranted && !coarseGranted) {
+            /*
+             Precise location is required for a route. The current index.js
+             already recognises this error code and offers Open Settings.
+            */
+            if (!fineGranted) {
                 promise.reject(
-                        "LOCATION_PERMISSION_REQUIRED",
-                        "Location permission must be granted before starting a walk."
+                        "location_permission_denied",
+                        "Precise location must be enabled before tracking can start."
                 );
 
                 return;
             }
+
+            /*
+             index.js flushes the existing buffer immediately before calling
+             start. Clear any remaining points for this mode so a failed upload
+             from a previous walk/search cannot contaminate the new route.
+            */
+            LocationBuffer.clearMode(
+                    context,
+                    trackingMode
+            );
 
             Intent intent =
                     new Intent(
@@ -194,6 +299,16 @@ public class BuddybossCustomCodeModule
                     LocationForegroundService.ACTION_START
             );
 
+            intent.putExtra(
+                    LocationForegroundService.EXTRA_TRACKING_MODE,
+                    trackingMode
+            );
+
+            intent.putExtra(
+                    LocationForegroundService.EXTRA_SESSION_ID,
+                    sessionId
+            );
+
             ContextCompat.startForegroundService(
                     context,
                     intent
@@ -202,9 +317,9 @@ public class BuddybossCustomCodeModule
             boolean notificationsGranted =
                     Build.VERSION.SDK_INT < 33
                             || ContextCompat.checkSelfPermission(
-                                    context,
-                                    POST_NOTIFICATIONS_PERMISSION
-                            ) == PackageManager.PERMISSION_GRANTED;
+                            context,
+                            POST_NOTIFICATIONS_PERMISSION
+                    ) == PackageManager.PERMISSION_GRANTED;
 
             WritableMap result =
                     Arguments.createMap();
@@ -234,7 +349,27 @@ public class BuddybossCustomCodeModule
                     "android"
             );
 
-            promise.resolve(result);
+            result.putString(
+                    "trackingMode",
+                    trackingMode
+            );
+
+            result.putDouble(
+                    "sessionId",
+                    sessionId
+            );
+
+            /*
+             Android still uploads through the React Native sidecar.
+            */
+            result.putBoolean(
+                    "nativeDirectUpload",
+                    false
+            );
+
+            promise.resolve(
+                    result
+            );
 
         } catch (Exception exception) {
             Log.e(
@@ -267,7 +402,9 @@ public class BuddybossCustomCodeModule
                             )
                     );
 
-            promise.resolve(stopped);
+            promise.resolve(
+                    stopped
+            );
 
         } catch (Exception exception) {
             Log.e(
@@ -297,12 +434,15 @@ public class BuddybossCustomCodeModule
             WritableArray result =
                     Arguments.createArray();
 
-            for (int index = 0;
-                 index < stored.length();
-                 index++) {
-
+            for (
+                    int index = 0;
+                    index < stored.length();
+                    index++
+            ) {
                 JSONObject point =
-                        stored.optJSONObject(index);
+                        stored.optJSONObject(
+                                index
+                        );
 
                 if (point == null) {
                     continue;
@@ -321,17 +461,23 @@ public class BuddybossCustomCodeModule
 
                 item.putDouble(
                         "lat",
-                        point.optDouble("lat")
+                        point.optDouble(
+                                "lat"
+                        )
                 );
 
                 item.putDouble(
                         "lng",
-                        point.optDouble("lng")
+                        point.optDouble(
+                                "lng"
+                        )
                 );
 
                 item.putDouble(
                         "ts",
-                        point.optLong("ts")
+                        point.optLong(
+                                "ts"
+                        )
                 );
 
                 item.putDouble(
@@ -347,10 +493,30 @@ public class BuddybossCustomCodeModule
                         true
                 );
 
-                result.pushMap(item);
+                item.putString(
+                        "trackingMode",
+                        point.optString(
+                                "trackingMode",
+                                ""
+                        )
+                );
+
+                item.putDouble(
+                        "sessionId",
+                        point.optLong(
+                                "sessionId",
+                                0L
+                        )
+                );
+
+                result.pushMap(
+                        item
+                );
             }
 
-            promise.resolve(result);
+            promise.resolve(
+                    result
+            );
 
         } catch (Exception exception) {
             promise.reject(
@@ -361,6 +527,9 @@ public class BuddybossCustomCodeModule
         }
     }
 
+    /**
+     * Legacy acknowledgement retained for old index.js builds.
+     */
     @ReactMethod
     public void acknowledgeLocation(
             double timestamp,
@@ -372,11 +541,46 @@ public class BuddybossCustomCodeModule
                     (long) timestamp
             );
 
-            promise.resolve(true);
+            promise.resolve(
+                    true
+            );
 
         } catch (Exception exception) {
             promise.reject(
                     "ACKNOWLEDGE_LOCATION_ERROR",
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+
+    /**
+     * Mode-aware acknowledgement already preferred by current index.js.
+     */
+    @ReactMethod
+    public void acknowledgeLocationForMode(
+            double timestamp,
+            String trackingMode,
+            double sessionId,
+            Promise promise
+    ) {
+        try {
+            LocationBuffer.acknowledgeLocationForMode(
+                    getReactApplicationContext(),
+                    (long) timestamp,
+                    normaliseTrackingMode(
+                            trackingMode
+                    ),
+                    (long) sessionId
+            );
+
+            promise.resolve(
+                    true
+            );
+
+        } catch (Exception exception) {
+            promise.reject(
+                    "ACKNOWLEDGE_LOCATION_FOR_MODE_ERROR",
                     exception.getMessage(),
                     exception
             );
@@ -392,7 +596,9 @@ public class BuddybossCustomCodeModule
                     getReactApplicationContext()
             );
 
-            promise.resolve(true);
+            promise.resolve(
+                    true
+            );
 
         } catch (Exception exception) {
             promise.reject(
@@ -424,6 +630,20 @@ public class BuddybossCustomCodeModule
                         listenerCount
                                 - (int) count
                 );
+    }
+
+    private String normaliseTrackingMode(
+            String value
+    ) {
+        if (
+                LocationForegroundService.MODE_SEARCH_PARTY.equals(
+                        value
+                )
+        ) {
+            return LocationForegroundService.MODE_SEARCH_PARTY;
+        }
+
+        return LocationForegroundService.MODE_WALK;
     }
 
     // Lifecycle methods required by BuddyBoss — do not delete.
@@ -461,6 +681,8 @@ public class BuddybossCustomCodeModule
             int b,
             Promise promise
     ) {
-        promise.resolve(a * b);
+        promise.resolve(
+                a * b
+        );
     }
 }
