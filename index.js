@@ -62,6 +62,9 @@ const LOCATION_INTRO_COOKIE_NAME =
 const NEARBY_ACTIVITY_RADIUS_KEY =
     'skedoggle_nearby_activity_radius_v1';
 
+const MEMBER_PROFILE_EDIT_URL =
+    'https://skedoggle.com/members/me/profile/edit/';
+
 const ALLOWED_NEARBY_ACTIVITY_RADII =
     [
         0,
@@ -368,6 +371,25 @@ const NearbyActivityRadiusFilter =
             ]
         );
 
+        const openPostcodeProfile =
+            useCallback(
+                () => {
+                    Linking
+                        .openURL(
+                            MEMBER_PROFILE_EDIT_URL
+                        )
+                        .catch(
+                            () => {
+                                Alert.alert(
+                                    'Could not open profile',
+                                    'Please open your profile from the app menu to edit your postcode.'
+                                );
+                            }
+                        );
+                },
+                []
+            );
+
         const selectRadius =
             useCallback(
                 (radiusValue) => {
@@ -536,7 +558,20 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityNote
                     }
                 >
-                    Based on your saved postcode.
+                    {'Based on your saved '}
+                    <Text
+                        accessibilityRole="link"
+                        onPress={
+                            openPostcodeProfile
+                        }
+                        style={
+                            styles
+                                .nearbyActivityPostcodeLink
+                        }
+                    >
+                        postcode
+                    </Text>
+                    {'.'}
                 </Text>
             </View>
         );
@@ -4250,6 +4285,8 @@ const styles = StyleSheet.create({
             15,
         fontWeight:
             '700',
+        textAlign:
+            'center',
         paddingHorizontal:
             16,
         marginBottom:
@@ -4317,10 +4354,21 @@ const styles = StyleSheet.create({
             12,
         lineHeight:
             17,
+        textAlign:
+            'center',
         paddingHorizontal:
             16,
         marginTop:
             5,
+    },
+
+    nearbyActivityPostcodeLink: {
+        color:
+            '#d622a6',
+        fontWeight:
+            '700',
+        textDecorationLine:
+            'underline',
     },
 });
 
