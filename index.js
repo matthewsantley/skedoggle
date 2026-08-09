@@ -4517,8 +4517,18 @@ export const applyCustomCode = (
                     const nextParams =
                         nearbyActivityAutomaticRefreshPending
                             ? {
-                                  ...incomingParams,
+                                  /*
+                                   Remembered parameters are only a fallback
+                                   for values BuddyBoss does not reproduce when
+                                   we trigger an automatic radius refresh.
+
+                                   BuddyBoss's CURRENT request must win. This
+                                   prevents an old Topic/type selection from
+                                   being reapplied after the member has returned
+                                   to All Topics / All activity types.
+                                  */
                                   ...nearbyActivityStickyFetchParams,
+                                  ...incomingParams,
                               }
                             : incomingParams;
 
@@ -4558,7 +4568,7 @@ export const applyCustomCode = (
                         nearbyActivityRefreshContext
                             .subfilters =
                             nextParams.type &&
-                            params.type !==
+                            nextParams.type !==
                                 '-1'
                                 ? {
                                       type:
