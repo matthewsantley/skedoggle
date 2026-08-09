@@ -4607,29 +4607,45 @@ export const applyCustomCode = (
     }
 
     /*
-     Mount the Skedoggle nearby controls directly below BuddyBoss's filter
-     row instead of attaching them to the first Activity item.
+     Keep BuddyBoss's native Activity header completely intact.
 
-     This is important when a legitimate 3/5/10-mile search returns zero
-     posts: the filter row still exists even though there is no first item
-     and BuddyBoss/Adonis may not render a custom ListEmptyComponent.
+     The nearby controls previously used the filter-screen "after filter"
+     position. On the Activity screen that placement can interfere with/clamp
+     the native header area, including BuddyBoss's search and composer controls.
+
+     BuddyBoss provides indexScreenApiHooks.setAfterHeaderComponent() for
+     content that belongs immediately AFTER the list screen's own header.
+     This gives Skedoggle a stable mount point even when the Activity result
+     set is empty, without replacing or modifying the native header itself.
     */
-    const filterScreenApi =
+    const indexScreenApi =
         externalCodeSetup
-            ?.filterScreenApiHooks;
+            ?.indexScreenApiHooks;
 
     if (
-        filterScreenApi &&
-        typeof filterScreenApi
-            .setAfterFilterComponent ===
+        indexScreenApi &&
+        typeof indexScreenApi
+            .setAfterHeaderComponent ===
             'function'
     ) {
-        filterScreenApi
-            .setAfterFilterComponent(
-                (props) => {
+        indexScreenApi
+            .setAfterHeaderComponent(
+                (hookProps) => {
+                    /*
+                     BuddyBoss documents AfterHeaderComponentProps as wrapping
+                     the normal filter/screen props in a `props` property.
+                     Keep a direct-props fallback for compatibility with
+                     different app builds.
+                    */
+                    const activityProps =
+                        hookProps
+                            ?.props ||
+                        hookProps ||
+                        {};
+
                     if (
                         !isMainActivitiesFilterScreen(
-                            props
+                            activityProps
                         )
                     ) {
                         return null;
@@ -4640,7 +4656,7 @@ export const applyCustomCode = (
                             <DailyWoofLocationIntroduction />
 
                             <NearbyActivityRadiusFilter
-                                {...props}
+                                {...activityProps}
                             />
                         </View>
                     );
