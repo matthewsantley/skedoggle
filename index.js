@@ -88,89 +88,87 @@ let nearbyActivityRadius =
 let nearbyActivityRequestGeneration =
     Date.now();
 
-let nearbyActivityRefreshContext = {
-    filter:
-        'all',
-
-    /*
-     BuddyBoss activitiesRequested() expects the subfilter argument to be an
-     object, for example {type: 'activity_update'}.
-    */
-    subfilters:
-        {},
-
-    searchTerm:
-        '',
-};
-
 /*
- BuddyBoss topic selections and some other Activity Feed filters are supplied
- as extra REST parameters rather than through the four activitiesRequested()
- arguments. Keep the complete latest non-pagination parameter set so an
- automatic radius refresh can reproduce the same request as a manual refresh.
+ The nearby radius control deliberately does NOT remember BuddyBoss Topic,
+ Activity Type, search or scope filters.
+
+ Radius changes must use only the filter state BuddyBoss is displaying at the
+ moment the member presses 3 / 5 / 10 miles / All areas. This prevents an old
+ Topic or Type (for example Dog Walk) being silently reapplied.
 */
-let nearbyActivityStickyFetchParams =
-    {};
+const sanitiseCurrentActivitySubFilters =
+    (value) => {
+        if (
+            !value ||
+            typeof value !==
+                'object' ||
+            Array.isArray(value)
+        ) {
+            return {};
+        }
 
-let nearbyActivityAutomaticRefreshPending =
-    false;
-
-const nearbyActivityNonStickyParamNames =
-    new Set([
-        'page',
-        'per_page',
-        'offset',
-        'after',
-        'before',
-        'order',
-        'orderby',
-        'count_total',
-        'refresh',
-        'cache',
-        'cache_bust',
-        '_',
-        'skedoggle_radius',
-        'skedoggle_radius_generation',
-    ]);
-
-const captureNearbyActivityStickyParams =
-    (params) => {
-        const stickyParams =
+        const cleaned =
             {};
 
         Object
-            .keys(
-                params ||
-                    {}
-            )
+            .keys(value)
             .forEach(
                 (key) => {
-                    if (
-                        nearbyActivityNonStickyParamNames
-                            .has(key)
-                    ) {
-                        return;
-                    }
-
-                    const value =
-                        params[key];
+                    const item =
+                        value[key];
 
                     if (
-                        value ===
+                        item ===
                             undefined ||
-                        value ===
-                            null
+                        item ===
+                            null ||
+                        item ===
+                            false
                     ) {
                         return;
                     }
 
-                    stickyParams[key] =
-                        value;
+                    if (
+                        Array.isArray(item) &&
+                        item.length ===
+                            0
+                    ) {
+                        return;
+                    }
+
+                    const normalised =
+                        typeof item ===
+                            'string' ||
+                        typeof item ===
+                            'number'
+                            ? String(item)
+                                  .trim()
+                                  .toLowerCase()
+                            : '';
+
+                    /*
+                     BuddyBoss uses empty/default sentinel values for an
+                     unselected subfilter. Never turn those into a real filter.
+                    */
+                    if (
+                        normalised ===
+                            '' ||
+                        normalised ===
+                            '-1' ||
+                        normalised ===
+                            '0' ||
+                        normalised ===
+                            'all'
+                    ) {
+                        return;
+                    }
+
+                    cleaned[key] =
+                        item;
                 }
             );
 
-        nearbyActivityStickyFetchParams =
-            stickyParams;
+        return cleaned;
     };
 
 const normaliseNearbyActivityRadius =
@@ -248,30 +246,31 @@ const NearbyActivityRadiusFilter =
             setPreferenceLoaded,
         ] = useState(false);
 
+        /*
+         Use only BuddyBoss's CURRENT visible filter state.
+
+         There is intentionally no fallback to a previously captured Topic or
+         Activity Type. If All Topics / All Types is showing, currentSubFilters
+         is empty and the radius request contains no Topic/Type restriction.
+        */
         const currentFilter =
-            props?.filter ||
-            nearbyActivityRefreshContext
-                .filter ||
+            String(
+                props?.filter ||
+                    'all'
+            )
+                .trim() ||
             'all';
 
         const currentSubFilters =
-            (
-                props
-                    ?.activeSubFilters &&
-                typeof props
-                    .activeSubFilters ===
-                    'object'
-            )
-                ? props
-                      .activeSubFilters
-                : nearbyActivityRefreshContext
-                      .subfilters;
+            sanitiseCurrentActivitySubFilters(
+                props?.activeSubFilters
+            );
 
         const currentSearchTerm =
-            props?.searchTerm ||
-            nearbyActivityRefreshContext
-                .searchTerm ||
-            '';
+            typeof props?.searchTerm ===
+                'string'
+                ? props.searchTerm
+                : '';
 
         const isActivitiesScreen =
             isMainActivitiesFilterScreen(
@@ -355,9 +354,6 @@ const NearbyActivityRadiusFilter =
                             storedRadius >
                                 0
                         ) {
-                            nearbyActivityAutomaticRefreshPending =
-                                true;
-
                             refreshActivities();
                         }
                     };
@@ -440,9 +436,6 @@ const NearbyActivityRadiusFilter =
                         .catch(
                             () => {}
                         );
-
-                    nearbyActivityAutomaticRefreshPending =
-                        true;
 
                     setTimeout(
                         refreshActivities,
@@ -4497,7 +4490,16 @@ export const applyCustomCode = (
         activitiesApi
             .setFetchParamsFilter(
                 (params) => {
-                    const incomingParams = {
+                    /*
+                     Do not reconstruct or remember BuddyBoss filters here.
+
+                     The incoming params are the source of truth. If a Topic or
+                     Activity Type was manually selected, BuddyBoss includes it
+                     in the current request and we leave it untouched. If All
+                     Topics / All Types is selected, Skedoggle adds no Topic or
+                     Type parameter of its own.
+                    */
+                    const nextParams = {
                         ...(
                             params ||
                             {}
@@ -4505,103 +4507,11 @@ export const applyCustomCode = (
                     };
 
                     /*
-                     A normal BuddyBoss request—filter change, topic change,
-                     search, manual refresh or pagination—contains the real
-                     current filter state. Capture all non-pagination values.
+                     Always send an explicit radius. Radius 0 means All Areas.
 
-                     A Skedoggle automatic radius refresh starts from the
-                     action's basic params, then restores the full latest
-                     BuddyBoss filter set. This retains topic IDs and any other
-                     filters that are not represented by activitiesRequested().
-                    */
-                    const nextParams =
-                        nearbyActivityAutomaticRefreshPending
-                            ? {
-                                  /*
-                                   Remembered parameters are only a fallback
-                                   for values BuddyBoss does not reproduce when
-                                   we trigger an automatic radius refresh.
-
-                                   BuddyBoss's CURRENT request must win. This
-                                   prevents an old Topic/type selection from
-                                   being reapplied after the member has returned
-                                   to All Topics / All activity types.
-                                  */
-                                  ...nearbyActivityStickyFetchParams,
-                                  ...incomingParams,
-                              }
-                            : incomingParams;
-
-                    nearbyActivityAutomaticRefreshPending =
-                        false;
-
-                    captureNearbyActivityStickyParams(
-                        nextParams
-                    );
-
-                    const requestedFilter =
-                        String(
-                            nextParams
-                                ?.scope ||
-                            nextParams
-                                ?.filter ||
-                            ''
-                        )
-                            .trim();
-
-                    if (requestedFilter) {
-                        nearbyActivityRefreshContext
-                            .filter =
-                            requestedFilter;
-                    }
-
-                    if (
-                        Object
-                            .prototype
-                            .hasOwnProperty
-                            .call(
-                                nextParams ||
-                                    {},
-                                'type'
-                            )
-                    ) {
-                        nearbyActivityRefreshContext
-                            .subfilters =
-                            nextParams.type &&
-                            nextParams.type !==
-                                '-1'
-                                ? {
-                                      type:
-                                          nextParams.type,
-                                  }
-                                : {};
-                    }
-
-                    if (
-                        Object
-                            .prototype
-                            .hasOwnProperty
-                            .call(
-                                nextParams ||
-                                    {},
-                                'search'
-                            )
-                    ) {
-                        nearbyActivityRefreshContext
-                            .searchTerm =
-                            nextParams.search ||
-                            '';
-                    }
-
-                    /*
-                     Always send an explicit value. Radius 0 means All Areas.
-                     Removing the parameter entirely allowed BuddyBoss's
-                     persisted activity cache to treat the request as the
-                     previously loaded default feed.
-
-                     The generation value changes only when the member changes
-                     distance, so initial loading, refresh and pagination for
-                     the selected radius continue to share one request identity.
+                     The generation changes whenever the member presses a
+                     radius button so BuddyBoss does not reuse the previous
+                     radius result as a cached request.
                     */
                     nextParams
                         .skedoggle_radius =
