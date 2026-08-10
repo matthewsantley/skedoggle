@@ -338,49 +338,6 @@ const isMainActivitiesFilterScreen =
         );
     };
 
-const NearbyActivityFeedDivider =
-    () => {
-        return (
-            <View
-                style={
-                    styles
-                        .nearbyActivityDividerWrap
-                }
-            >
-                <View
-                    style={
-                        styles
-                            .nearbyActivityDividerLine
-                    }
-                />
-
-                <View
-                    style={
-                        styles
-                            .nearbyActivityDividerPawCircle
-                    }
-                >
-                    <Text
-                        style={
-                            styles
-                                .nearbyActivityDividerPaw
-                        }
-                    >
-                        🐾
-                    </Text>
-                </View>
-
-                <View
-                    style={
-                        styles
-                            .nearbyActivityDividerLine
-                    }
-                />
-            </View>
-        );
-    };
-
-
 const NearbyActivityRadiusFilter =
     (props) => {
         const dispatch =
@@ -648,14 +605,53 @@ const NearbyActivityRadiusFilter =
                         .nearbyActivityContainer
                 }
             >
-                <Text
+                <View
                     style={
                         styles
-                            .nearbyActivityHeading
+                            .nearbyActivityHeadingRow
                     }
                 >
-                    Show posts from members near you
-                </Text>
+                    <View
+                        style={
+                            styles
+                                .nearbyActivityHeadingPawCircle
+                        }
+                    >
+                        <Text
+                            style={
+                                styles
+                                    .nearbyActivityHeadingPaw
+                            }
+                        >
+                            🐾
+                        </Text>
+                    </View>
+
+                    <Text
+                        style={
+                            styles
+                                .nearbyActivityHeading
+                        }
+                    >
+                        Show posts from members near you
+                    </Text>
+
+                    <View
+                        style={
+                            styles
+                                .nearbyActivityHeadingPawCircle
+                        }
+                    >
+                        <Text
+                            style={
+                                styles
+                                    .nearbyActivityHeadingPaw
+                            }
+                        >
+                            🐾
+                        </Text>
+                    </View>
+                </View>
 
                 <Text
                     style={
@@ -749,7 +745,12 @@ const NearbyActivityRadiusFilter =
                     )}
                 </ScrollView>
 
-                <NearbyActivityFeedDivider />
+                <View
+                    style={
+                        styles
+                            .nearbyActivityFeedDivider
+                    }
+                />
             </View>
         );
     };
@@ -4494,14 +4495,45 @@ const styles = StyleSheet.create({
             10,
         borderTopWidth:
             StyleSheet.hairlineWidth,
-        borderBottomWidth:
-            StyleSheet.hairlineWidth,
         borderColor:
             '#e5e7eb',
         paddingTop:
             12,
         paddingBottom:
             10,
+    },
+
+    nearbyActivityHeadingRow: {
+        flexDirection:
+            'row',
+        alignItems:
+            'center',
+        justifyContent:
+            'center',
+        paddingHorizontal:
+            14,
+        marginBottom:
+            9,
+    },
+
+    nearbyActivityHeadingPawCircle: {
+        width:
+            30,
+        height:
+            30,
+        borderRadius:
+            15,
+        alignItems:
+            'center',
+        justifyContent:
+            'center',
+        backgroundColor:
+            '#f8e7f4',
+    },
+
+    nearbyActivityHeadingPaw: {
+        fontSize:
+            15,
     },
 
     nearbyActivityHeading: {
@@ -4514,9 +4546,9 @@ const styles = StyleSheet.create({
         textAlign:
             'center',
         paddingHorizontal:
-            16,
-        marginBottom:
-            9,
+            10,
+        flexShrink:
+            1,
     },
 
     nearbyActivityOptions: {
@@ -4599,48 +4631,17 @@ const styles = StyleSheet.create({
             'underline',
     },
 
-    nearbyActivityDividerWrap: {
-        flexDirection:
-            'row',
-        alignItems:
-            'center',
-        paddingHorizontal:
-            18,
-        paddingTop:
-            8,
-        paddingBottom:
-            2,
-    },
-
-    nearbyActivityDividerLine: {
-        flex:
+    nearbyActivityFeedDivider: {
+        height:
             1,
-        height:
-            StyleSheet.hairlineWidth,
         backgroundColor:
-            '#e5e7eb',
-    },
-
-    nearbyActivityDividerPawCircle: {
-        width:
-            34,
-        height:
-            34,
-        borderRadius:
-            17,
-        alignItems:
-            'center',
-        justifyContent:
-            'center',
-        backgroundColor:
-            '#f8e7f4',
+            '#d6d6dc',
         marginHorizontal:
+            16,
+        marginTop:
             12,
-    },
-
-    nearbyActivityDividerPaw: {
-        fontSize:
-            17,
+        marginBottom:
+            0,
     },
 });
 
