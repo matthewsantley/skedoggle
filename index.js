@@ -2647,6 +2647,19 @@ const WalkNativeSidecar = ({
                         ''
                     );
 
+                const resumeRequested =
+                    commandData?.resume === true ||
+                    commandData?.resume === 1 ||
+                    commandData?.resume === '1' ||
+                    commandData?.resume === 'true';
+
+                const resumeAfterTimestamp =
+                    Number(
+                        commandData?.after_timestamp ??
+                        commandData?.afterTimestamp ??
+                        0
+                    );
+
                 if (
                     !command ||
                     !commandId ||
@@ -2724,15 +2737,36 @@ const WalkNativeSidecar = ({
 
                         /*
                          A prior WebView/app crash may have left accepted
-                         native points in the persistent buffer. Upload those
-                         before startBackgroundTracking() resets the current
-                         native session.
+                         native points in the persistent buffer. Try to forward
+                         them first. If the network is still unavailable, a
+                         resume MUST preserve the native buffer rather than
+                         deleting it.
                         */
                         await flushBufferedPoints();
 
-                        const result =
-                            await BuddybossCustomCode
-                                .startBackgroundTracking();
+                        let result = null;
+
+                        if (
+                            Platform.OS === 'ios' &&
+                            resumeRequested &&
+                            typeof BuddybossCustomCode
+                                ?.resumeBackgroundTracking ===
+                                'function'
+                        ) {
+                            result =
+                                await BuddybossCustomCode
+                                    .resumeBackgroundTracking(
+                                        Number.isFinite(
+                                            resumeAfterTimestamp
+                                        )
+                                            ? resumeAfterTimestamp
+                                            : 0
+                                    );
+                        } else {
+                            result =
+                                await BuddybossCustomCode
+                                    .startBackgroundTracking();
+                        }
 
                         trackingRef.current =
                             true;
