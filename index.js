@@ -96,6 +96,115 @@ let nearbyActivityRequestGeneration =
  moment the member presses 3 / 5 / 10 miles / All areas. This prevents an old
  Topic or Type (for example Dog Walk) being silently reapplied.
 */
+/*
+ Keep only the CURRENT BuddyBoss Activity filter state from a real BuddyBoss
+ request (for example when the member manually selects Dog Walk).
+
+ This is deliberately not historical filter memory:
+ - a radius-button refresh never updates this snapshot;
+ - selecting All Topics / All Types produces a new normal BuddyBoss request
+   and replaces the snapshot, clearing the old selection.
+*/
+let nearbyActivityRadiusRefreshPending =
+    false;
+
+let nearbyActivityManualFetchParams =
+    {};
+
+const nearbyActivityTransientFetchParamNames =
+    new Set([
+        'page',
+        'per_page',
+        'offset',
+        'after',
+        'before',
+        'order',
+        'orderby',
+        'count_total',
+        'refresh',
+        'cache',
+        'cache_bust',
+        '_',
+        'skedoggle_radius',
+        'skedoggle_radius_generation',
+    ]);
+
+const captureNearbyActivityManualFetchParams =
+    (params) => {
+        const captured =
+            {};
+
+        Object
+            .keys(
+                params ||
+                    {}
+            )
+            .forEach(
+                (key) => {
+                    if (
+                        nearbyActivityTransientFetchParamNames
+                            .has(key)
+                    ) {
+                        return;
+                    }
+
+                    const value =
+                        params[key];
+
+                    if (
+                        value ===
+                            undefined ||
+                        value ===
+                            null ||
+                        value ===
+                            false
+                    ) {
+                        return;
+                    }
+
+                    if (
+                        Array.isArray(value) &&
+                        value.length ===
+                            0
+                    ) {
+                        return;
+                    }
+
+                    const normalised =
+                        typeof value ===
+                            'string' ||
+                        typeof value ===
+                            'number'
+                            ? String(value)
+                                  .trim()
+                                  .toLowerCase()
+                            : '';
+
+                    /*
+                     Do not store BuddyBoss's "nothing selected" sentinels.
+                     Because each normal request REPLACES the snapshot, this
+                     also clears a previously selected Topic or Activity Type.
+                    */
+                    if (
+                        normalised ===
+                            '' ||
+                        normalised ===
+                            '-1' ||
+                        normalised ===
+                            '0'
+                    ) {
+                        return;
+                    }
+
+                    captured[key] =
+                        value;
+                }
+            );
+
+        nearbyActivityManualFetchParams =
+            captured;
+    };
+
 const sanitiseCurrentActivitySubFilters =
     (value) => {
         if (
@@ -229,6 +338,49 @@ const isMainActivitiesFilterScreen =
         );
     };
 
+const NearbyActivityFeedDivider =
+    () => {
+        return (
+            <View
+                style={
+                    styles
+                        .nearbyActivityDividerWrap
+                }
+            >
+                <View
+                    style={
+                        styles
+                            .nearbyActivityDividerLine
+                    }
+                />
+
+                <View
+                    style={
+                        styles
+                            .nearbyActivityDividerPawCircle
+                    }
+                >
+                    <Text
+                        style={
+                            styles
+                                .nearbyActivityDividerPaw
+                        }
+                    >
+                        🐾
+                    </Text>
+                </View>
+
+                <View
+                    style={
+                        styles
+                            .nearbyActivityDividerLine
+                    }
+                />
+            </View>
+        );
+    };
+
+
 const NearbyActivityRadiusFilter =
     (props) => {
         const dispatch =
@@ -354,6 +506,9 @@ const NearbyActivityRadiusFilter =
                             storedRadius >
                                 0
                         ) {
+                            nearbyActivityRadiusRefreshPending =
+                                true;
+
                             refreshActivities();
                         }
                     };
@@ -436,6 +591,9 @@ const NearbyActivityRadiusFilter =
                         .catch(
                             () => {}
                         );
+
+                    nearbyActivityRadiusRefreshPending =
+                        true;
 
                     setTimeout(
                         refreshActivities,
@@ -590,6 +748,8 @@ const NearbyActivityRadiusFilter =
                         }
                     )}
                 </ScrollView>
+
+                <NearbyActivityFeedDivider />
             </View>
         );
     };
@@ -4438,6 +4598,50 @@ const styles = StyleSheet.create({
         textDecorationLine:
             'underline',
     },
+
+    nearbyActivityDividerWrap: {
+        flexDirection:
+            'row',
+        alignItems:
+            'center',
+        paddingHorizontal:
+            18,
+        paddingTop:
+            8,
+        paddingBottom:
+            2,
+    },
+
+    nearbyActivityDividerLine: {
+        flex:
+            1,
+        height:
+            StyleSheet.hairlineWidth,
+        backgroundColor:
+            '#e5e7eb',
+    },
+
+    nearbyActivityDividerPawCircle: {
+        width:
+            34,
+        height:
+            34,
+        borderRadius:
+            17,
+        alignItems:
+            'center',
+        justifyContent:
+            'center',
+        backgroundColor:
+            '#f8e7f4',
+        marginHorizontal:
+            12,
+    },
+
+    nearbyActivityDividerPaw: {
+        fontSize:
+            17,
+    },
 });
 
 export const applyCustomCode = (
@@ -4490,21 +4694,55 @@ export const applyCustomCode = (
         activitiesApi
             .setFetchParamsFilter(
                 (params) => {
-                    /*
-                     Do not reconstruct or remember BuddyBoss filters here.
-
-                     The incoming params are the source of truth. If a Topic or
-                     Activity Type was manually selected, BuddyBoss includes it
-                     in the current request and we leave it untouched. If All
-                     Topics / All Types is selected, Skedoggle adds no Topic or
-                     Type parameter of its own.
-                    */
-                    const nextParams = {
+                    const incomingParams = {
                         ...(
                             params ||
                             {}
                         ),
                     };
+
+                    const isRadiusRefresh =
+                        nearbyActivityRadiusRefreshPending;
+
+                    /*
+                     A normal BuddyBoss request is the authoritative current
+                     filter state. This includes manual Topic / Activity Type
+                     changes, search changes, pull-to-refresh and the initial
+                     feed request.
+
+                     Replace the snapshot rather than adding to it, so choosing
+                     All Topics / All Types automatically clears any previous
+                     Dog Walk selection.
+                    */
+                    if (!isRadiusRefresh) {
+                        captureNearbyActivityManualFetchParams(
+                            incomingParams
+                        );
+                    }
+
+                    /*
+                     Radius-button requests created through activitiesRequested()
+                     do not always reproduce Topic parameters even though the
+                     BuddyBoss UI still shows that Topic selected.
+
+                     For those requests only, use the last CURRENT manual
+                     BuddyBoss filter state as fallback data. The fresh
+                     incoming request wins for every parameter it does contain.
+                    */
+                    const nextParams =
+                        isRadiusRefresh
+                            ? {
+                                  ...nearbyActivityManualFetchParams,
+                                  ...incomingParams,
+                              }
+                            : incomingParams;
+
+                    /*
+                     Consume the marker immediately so no later BuddyBoss
+                     request is mistaken for the radius refresh.
+                    */
+                    nearbyActivityRadiusRefreshPending =
+                        false;
 
                     /*
                      Always send an explicit radius. Radius 0 means All Areas.
