@@ -199,6 +199,13 @@ static void SkedoggleAppendDebugLog(
     NSNumber *_pendingTrackingSessionId;
     NSNumber *_pendingSearchPartyUserId;
     NSString *_pendingSearchPartyToken;
+
+    /*
+     Crash/network recovery: when YES, restarting a walk must keep the
+     persistent native GPS buffer so points collected before the WebView/app
+     failure can still be replayed after connectivity returns.
+    */
+    BOOL _pendingPreserveBufferedLocations;
 }
 
 RCT_EXPORT_MODULE()
@@ -499,6 +506,7 @@ RCT_REMAP_METHOD(
         _pendingTrackingSessionId = nil;
         _pendingSearchPartyUserId = nil;
         _pendingSearchPartyToken = nil;
+        _pendingPreserveBufferedLocations = NO;
 
         [self loadBufferedLocations];
         [self setupLocationManager];
@@ -765,6 +773,7 @@ RCT_REMAP_METHOD(
     self->_pendingTrackingSessionId = nil;
     self->_pendingSearchPartyUserId = nil;
     self->_pendingSearchPartyToken = nil;
+    self->_pendingPreserveBufferedLocations = NO;
 }
 
 - (void)beginLocationTrackingWithStatus:
@@ -777,15 +786,26 @@ RCT_REMAP_METHOD(
         (NSNumber *)userId
     token:
         (NSString *)token
+    preserveBufferedLocations:
+        (BOOL)preserveBufferedLocations
     resolver:
         (RCTPromiseResolveBlock)resolve
 {
     /*
-     Only one native location session can be active at once. Clearing the
-     old buffer here prevents points from a previous walk or Search Party
-     being sent to the newly started activity.
+     A genuinely fresh tracking session clears any old native buffer.
+
+     A crash/network RESUME is different: the buffer is the safety copy of
+     the walk. Never erase it merely because React Native/WebView restarted.
     */
-    [self clearBufferedLocations];
+    if (!preserveBufferedLocations) {
+        [self clearBufferedLocations];
+    } else {
+        SkedoggleAppendDebugLog([
+            NSString stringWithFormat:
+                @"NATIVE resume preserving buffered locations count=%lu",
+                (unsigned long)self->_bufferedLocations.count
+        ]);
+    }
 
     self->_trackingMode =
         [self normalisedTrackingMode:mode];
@@ -862,6 +882,8 @@ RCT_REMAP_METHOD(
         (NSNumber *)userId
     token:
         (NSString *)token
+    preserveBufferedLocations:
+        (BOOL)preserveBufferedLocations
     resolver:
         (RCTPromiseResolveBlock)resolve
     rejecter:
@@ -1026,6 +1048,9 @@ RCT_REMAP_METHOD(
                 self->_pendingSearchPartyToken =
                     safeToken;
 
+                self->_pendingPreserveBufferedLocations =
+                    preserveBufferedLocations;
+
                 SkedoggleAppendDebugLog(
                     @"NATIVE requesting While Using the App location permission"
                 );
@@ -1056,6 +1081,8 @@ RCT_REMAP_METHOD(
                             safeUserId
                         token:
                             safeToken
+                        preserveBufferedLocations:
+                            preserveBufferedLocations
                         resolver:
                             resolve
                 ];
@@ -1099,6 +1126,51 @@ RCT_REMAP_METHOD(
                 nil
             token:
                 nil
+            preserveBufferedLocations:
+                NO
+            resolver:
+                resolve
+            rejecter:
+                reject
+    ];
+}
+
+/*
+ Crash/network recovery entry point for Walk Tracking.
+
+ The WebView supplies the timestamp of its last durable route point. Native
+ Core Location continues to own the persistent buffer; this method restarts
+ location updates WITHOUT clearing that buffer.
+*/
+RCT_REMAP_METHOD(
+    resumeBackgroundTracking,
+    resumeWalkAfterTimestamp:
+        (nonnull NSNumber *)afterTimestamp
+    withResolver:
+        (RCTPromiseResolveBlock)resolve
+    withRejecter:
+        (RCTPromiseRejectBlock)reject
+)
+{
+    SkedoggleAppendDebugLog([
+        NSString stringWithFormat:
+            @"NATIVE resumeBackgroundTracking called after=%@ buffered=%lu",
+            afterTimestamp ?: @0,
+            (unsigned long)self->_bufferedLocations.count
+    ]);
+
+    [
+        self
+            requestLocationTrackingForMode:
+                @"walk"
+            sessionId:
+                nil
+            userId:
+                nil
+            token:
+                nil
+            preserveBufferedLocations:
+                YES
             resolver:
                 resolve
             rejecter:
@@ -1135,6 +1207,8 @@ RCT_REMAP_METHOD(
                 nil
             token:
                 nil
+            preserveBufferedLocations:
+                NO
             resolver:
                 resolve
             rejecter:
@@ -1180,6 +1254,8 @@ RCT_REMAP_METHOD(
                 userId
             token:
                 token
+            preserveBufferedLocations:
+                NO
             resolver:
                 resolve
             rejecter:
@@ -1573,6 +1649,9 @@ RCT_REMAP_METHOD(
             NSString *pendingToken =
                 self->_pendingSearchPartyToken;
 
+            BOOL pendingPreserveBufferedLocations =
+                self->_pendingPreserveBufferedLocations;
+
             [self clearPendingStartPromise];
 
             [
@@ -1587,6 +1666,8 @@ RCT_REMAP_METHOD(
                         pendingUserId
                     token:
                         pendingToken
+                    preserveBufferedLocations:
+                        pendingPreserveBufferedLocations
                     resolver:
                         pendingResolve
             ];
