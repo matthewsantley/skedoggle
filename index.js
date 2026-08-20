@@ -2541,9 +2541,16 @@ const WalkNativeSidecar = ({
                         points,
                     });
 
-                    await acknowledgePoints(
-                        points
-                    );
+                    /*
+                     During an active walk the native buffer is the crash-proof
+                     copy of the route. Uploading to the bridge is useful, but do
+                     NOT delete the native copy until a deliberate stop command.
+                    */
+                    if (!trackingRef.current) {
+                        await acknowledgePoints(
+                            points
+                        );
+                    }
 
                     return true;
                 } catch (error) {
@@ -2971,6 +2978,14 @@ const WalkNativeSidecar = ({
                         command ===
                         'stop'
                     ) {
+                        /*
+                         A deliberate Finish/Stop is the only point at which the
+                         walk's persistent native safety buffer may be acknowledged
+                         and removed.
+                        */
+                        trackingRef.current =
+                            false;
+
                         await flushBufferedPoints();
 
                         if (
@@ -2983,9 +2998,6 @@ const WalkNativeSidecar = ({
                         }
 
                         await flushBufferedPoints();
-
-                        trackingRef.current =
-                            false;
                     }
                 } catch (error) {
                     const errorCode =
