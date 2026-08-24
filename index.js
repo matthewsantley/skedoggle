@@ -4814,20 +4814,109 @@ export const applyCustomCode = (
     /*
      Keep BuddyBoss's native Activity header completely intact.
 
-     The nearby controls previously used the filter-screen "after filter"
-     position. On the Activity screen that placement can interfere with/clamp
-     the native header area, including BuddyBoss's search and composer controls.
+     iOS:
+       The existing after-header position is stable and remains unchanged.
 
-     BuddyBoss provides indexScreenApiHooks.setAfterHeaderComponent() for
-     content that belongs immediately AFTER the list screen's own header.
-     This gives Skedoggle a stable mount point even when the Activity result
-     set is empty, without replacing or modifying the native header itself.
+     Android:
+       Current BuddyBoss builds use a fixed-height Activity header containing
+       the native post composer and Topic/type filter row. Mounting our nearby
+       controls through the generic after-header hook can cause those native
+       controls to be clipped/hidden.
+
+       On Android mount Skedoggle directly AFTER BuddyBoss's own filter row and
+       increase the Activity header height to make room for the custom block.
+       This preserves:
+         - the "write a new activity" composer;
+         - the Topic/type selector;
+         - the radius controls;
+         - radius controls even when the filtered feed contains zero posts.
     */
     const indexScreenApi =
         externalCodeSetup
             ?.indexScreenApiHooks;
 
+    const filterScreenApi =
+        externalCodeSetup
+            ?.filterScreenApiHooks;
+
     if (
+        Platform.OS === 'android' &&
+        filterScreenApi &&
+        typeof filterScreenApi
+            .setAfterFilterComponent ===
+            'function'
+    ) {
+        filterScreenApi
+            .setAfterFilterComponent(
+                (activityProps) => {
+                    if (
+                        !isMainActivitiesFilterScreen(
+                            activityProps
+                        )
+                    ) {
+                        return null;
+                    }
+
+                    return (
+                        <View>
+                            <DailyWoofLocationIntroduction />
+
+                            <NearbyActivityRadiusFilter
+                                {...activityProps}
+                            />
+                        </View>
+                    );
+                }
+            );
+    }
+
+    if (
+        Platform.OS === 'android' &&
+        indexScreenApi &&
+        typeof indexScreenApi
+            .setHeaderHeight ===
+            'function'
+    ) {
+        indexScreenApi
+            .setHeaderHeight(
+                (
+                    defaultHeaderHeight,
+                    filterType
+                ) => {
+                    const normalisedFilterType =
+                        String(
+                            filterType ||
+                                ''
+                        )
+                            .trim()
+                            .toLowerCase();
+
+                    if (
+                        normalisedFilterType ===
+                            'activity' ||
+                        normalisedFilterType ===
+                            'activities'
+                    ) {
+                        /*
+                         Nearby block is ~150px high including its divider and
+                         spacing. Give Android a few extra pixels so BuddyBoss's
+                         composer/topic controls are never squeezed out.
+                        */
+                        return (
+                            Number(
+                                defaultHeaderHeight
+                            ) +
+                            156
+                        );
+                    }
+
+                    return defaultHeaderHeight;
+                }
+            );
+    }
+
+    if (
+        Platform.OS !== 'android' &&
         indexScreenApi &&
         typeof indexScreenApi
             .setAfterHeaderComponent ===
