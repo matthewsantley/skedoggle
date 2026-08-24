@@ -66,6 +66,13 @@ const LOCATION_INTRO_COOKIE_URL =
 const LOCATION_INTRO_COOKIE_NAME =
     'skedoggle_location_intro_v5';
 
+const LOCATION_INTRO_STORAGE_KEY =
+    'skedoggle_location_intro_seen_v5';
+
+const IS_NATIVE_MOBILE =
+    Platform.OS === 'ios' ||
+    Platform.OS === 'android';
+
 const NEARBY_ACTIVITY_RADIUS_KEY =
     'skedoggle_nearby_activity_radius_v1';
 
@@ -756,8 +763,58 @@ const NearbyActivityRadiusFilter =
     };
 
 
+const hasSeenLocationIntroShared =
+    async () => {
+        /*
+         iOS has a native saved preference. Android's current custom native
+         module does not expose hasSeenLocationIntro(), so keep a React Native
+         storage copy as the cross-platform fallback.
+        */
+        try {
+            if (
+                typeof BuddybossCustomCode
+                    ?.hasSeenLocationIntro ===
+                'function'
+            ) {
+                const result =
+                    await BuddybossCustomCode
+                        .hasSeenLocationIntro();
+
+                if (result?.seen) {
+                    return true;
+                }
+            }
+        } catch (error) {
+            /* Fall through to AsyncStorage. */
+        }
+
+        try {
+            const stored =
+                await AsyncStorage.getItem(
+                    LOCATION_INTRO_STORAGE_KEY
+                );
+
+            return stored === '1';
+        } catch (error) {
+            /*
+             Fail open: if the preference cannot be read, show the explanation.
+            */
+            return false;
+        }
+    };
+
 const markLocationIntroSeenShared =
     async () => {
+        try {
+            await AsyncStorage.setItem(
+                LOCATION_INTRO_STORAGE_KEY,
+                '1'
+            );
+        } catch (error) {
+            /*
+             Keep trying the native preference/cookie below.
+            */
+        }
         try {
             if (
                 typeof BuddybossCustomCode
@@ -1068,7 +1125,7 @@ const buildMapLocationIntroductionScript =
                     '</div>' +
                     '<p class="sk-location-intro-control">Skedoggle does not track your location unless you start a feature that needs it.</p>' +
                     '<button id="skedoggle-location-intro-continue" type="button">Continue</button>' +
-                    '<p class="sk-location-intro-footer">You can change location access at any time in your iPhone Settings.</p>' +
+                    '<p class="sk-location-intro-footer">You can change location access at any time in your phone Settings.</p>' +
                 '</div>' +
             '</div>';
 
@@ -1999,7 +2056,7 @@ const WalkLocationIntroduction = ({
                         styles.introFooter
                     }
                 >
-                    You can change location access at any time in your iPhone Settings.
+                    You can change location access at any time in your phone Settings.
                 </Text>
             </ScrollView>
         </SafeAreaView>
@@ -2011,7 +2068,7 @@ const LocationIntroductionOnlySidecar = ({
 }) => {
     const [locationIntroState, setLocationIntroState] =
         useState(
-            Platform.OS === 'ios'
+            IS_NATIVE_MOBILE
                 ? 'checking'
                 : 'hidden'
         );
@@ -2023,10 +2080,7 @@ const LocationIntroductionOnlySidecar = ({
 
             const checkLocationIntroduction =
                 async () => {
-                    if (
-                        Platform.OS !==
-                        'ios'
-                    ) {
+                    if (!IS_NATIVE_MOBILE) {
                         if (!cancelled) {
                             setLocationIntroState(
                                 'hidden'
@@ -2036,46 +2090,15 @@ const LocationIntroductionOnlySidecar = ({
                         return;
                     }
 
-                    if (
-                        typeof BuddybossCustomCode
-                            ?.hasSeenLocationIntro !==
-                        'function'
-                    ) {
-                        /*
-                         Fail open: show the explanation even if the
-                         native saved-preference method is unavailable.
-                        */
-                        if (!cancelled) {
-                            setLocationIntroState(
-                                'visible'
-                            );
-                        }
+                    const seen =
+                        await hasSeenLocationIntroShared();
 
-                        return;
-                    }
-
-                    try {
-                        const result =
-                            await BuddybossCustomCode
-                                .hasSeenLocationIntro();
-
-                        if (!cancelled) {
-                            setLocationIntroState(
-                                result?.seen
-                                    ? 'hidden'
-                                    : 'visible'
-                            );
-                        }
-                    } catch (error) {
-                        /*
-                         Do not silently skip the explanation if the
-                         saved preference cannot be read.
-                        */
-                        if (!cancelled) {
-                            setLocationIntroState(
-                                'visible'
-                            );
-                        }
+                    if (!cancelled) {
+                        setLocationIntroState(
+                            seen
+                                ? 'hidden'
+                                : 'visible'
+                        );
                     }
                 };
 
@@ -2121,8 +2144,7 @@ const LocationIntroductionOnlySidecar = ({
         );
 
     if (
-        Platform.OS ===
-            'ios' &&
+        IS_NATIVE_MOBILE &&
         locationIntroState !==
             'hidden'
     ) {
@@ -2158,7 +2180,7 @@ const LocationIntroductionOnlySidecar = ({
 const DailyWoofLocationIntroduction = () => {
     const [introState, setIntroState] =
         useState(
-            Platform.OS === 'ios'
+            IS_NATIVE_MOBILE
                 ? 'checking'
                 : 'hidden'
         );
@@ -2168,40 +2190,22 @@ const DailyWoofLocationIntroduction = () => {
             let cancelled = false;
 
             const checkSeen = async () => {
-                if (Platform.OS !== 'ios') {
+                if (!IS_NATIVE_MOBILE) {
                     if (!cancelled) {
                         setIntroState('hidden');
                     }
                     return;
                 }
 
-                if (
-                    typeof BuddybossCustomCode
-                        ?.hasSeenLocationIntro !==
-                    'function'
-                ) {
-                    if (!cancelled) {
-                        setIntroState('visible');
-                    }
-                    return;
-                }
+                const seen =
+                    await hasSeenLocationIntroShared();
 
-                try {
-                    const result =
-                        await BuddybossCustomCode
-                            .hasSeenLocationIntro();
-
-                    if (!cancelled) {
-                        setIntroState(
-                            result?.seen
-                                ? 'hidden'
-                                : 'visible'
-                        );
-                    }
-                } catch (error) {
-                    if (!cancelled) {
-                        setIntroState('visible');
-                    }
+                if (!cancelled) {
+                    setIntroState(
+                        seen
+                            ? 'hidden'
+                            : 'visible'
+                    );
                 }
             };
 
@@ -2233,7 +2237,7 @@ const DailyWoofLocationIntroduction = () => {
         );
 
     if (
-        Platform.OS !== 'ios' ||
+        !IS_NATIVE_MOBILE ||
         introState === 'hidden'
     ) {
         return null;
@@ -2268,7 +2272,7 @@ const WalkNativeSidecar = ({
 }) => {
     const [walkIntroState, setWalkIntroState] =
         useState(
-            Platform.OS === 'ios'
+            IS_NATIVE_MOBILE
                 ? 'checking'
                 : 'hidden'
         );
@@ -2297,10 +2301,7 @@ const WalkNativeSidecar = ({
 
             const checkWalkIntroduction =
                 async () => {
-                    if (
-                        Platform.OS !==
-                        'ios'
-                    ) {
+                    if (!IS_NATIVE_MOBILE) {
                         if (!cancelled) {
                             setWalkIntroState(
                                 'hidden'
@@ -2310,46 +2311,15 @@ const WalkNativeSidecar = ({
                         return;
                     }
 
-                    if (
-                        typeof BuddybossCustomCode
-                            ?.hasSeenLocationIntro !==
-                        'function'
-                    ) {
-                        /*
-                         Fail open: show the explanation even if the
-                         native saved-preference method is unavailable.
-                        */
-                        if (!cancelled) {
-                            setWalkIntroState(
-                                'visible'
-                            );
-                        }
+                    const seen =
+                        await hasSeenLocationIntroShared();
 
-                        return;
-                    }
-
-                    try {
-                        const result =
-                            await BuddybossCustomCode
-                                .hasSeenLocationIntro();
-
-                        if (!cancelled) {
-                            setWalkIntroState(
-                                result?.seen
-                                    ? 'hidden'
-                                    : 'visible'
-                            );
-                        }
-                    } catch (error) {
-                        /*
-                         Do not silently skip the location explanation
-                         if reading the saved preference fails.
-                        */
-                        if (!cancelled) {
-                            setWalkIntroState(
-                                'visible'
-                            );
-                        }
+                    if (!cancelled) {
+                        setWalkIntroState(
+                            seen
+                                ? 'hidden'
+                                : 'visible'
+                        );
                     }
                 };
 
@@ -2635,8 +2605,7 @@ const WalkNativeSidecar = ({
                 commandData
             ) => {
                 if (
-                    Platform.OS ===
-                        'ios' &&
+                    IS_NATIVE_MOBILE &&
                     walkIntroState !==
                         'hidden'
                 ) {
@@ -3269,8 +3238,7 @@ const WalkNativeSidecar = ({
     );
 
     if (
-        Platform.OS ===
-            'ios' &&
+        IS_NATIVE_MOBILE &&
         walkIntroState !==
             'hidden'
     ) {
@@ -3372,7 +3340,7 @@ const SearchPartyNativeSidecar = ({
 }) => {
     const [locationIntroState, setLocationIntroState] =
         useState(
-            Platform.OS === 'ios'
+            IS_NATIVE_MOBILE
                 ? 'checking'
                 : 'hidden'
         );
@@ -3407,10 +3375,7 @@ const SearchPartyNativeSidecar = ({
 
             const checkLocationIntroduction =
                 async () => {
-                    if (
-                        Platform.OS !==
-                        'ios'
-                    ) {
+                    if (!IS_NATIVE_MOBILE) {
                         if (!cancelled) {
                             setLocationIntroState(
                                 'hidden'
@@ -3420,46 +3385,15 @@ const SearchPartyNativeSidecar = ({
                         return;
                     }
 
-                    if (
-                        typeof BuddybossCustomCode
-                            ?.hasSeenLocationIntro !==
-                        'function'
-                    ) {
-                        /*
-                         Fail open: show the explanation even if the
-                         native saved-preference method is unavailable.
-                        */
-                        if (!cancelled) {
-                            setLocationIntroState(
-                                'visible'
-                            );
-                        }
+                    const seen =
+                        await hasSeenLocationIntroShared();
 
-                        return;
-                    }
-
-                    try {
-                        const result =
-                            await BuddybossCustomCode
-                                .hasSeenLocationIntro();
-
-                        if (!cancelled) {
-                            setLocationIntroState(
-                                result?.seen
-                                    ? 'hidden'
-                                    : 'visible'
-                            );
-                        }
-                    } catch (error) {
-                        /*
-                         Do not silently skip the location explanation
-                         if reading the saved preference fails.
-                        */
-                        if (!cancelled) {
-                            setLocationIntroState(
-                                'visible'
-                            );
-                        }
+                    if (!cancelled) {
+                        setLocationIntroState(
+                            seen
+                                ? 'hidden'
+                                : 'visible'
+                        );
                     }
                 };
 
@@ -4373,8 +4307,7 @@ const SearchPartyNativeSidecar = ({
     );
 
     if (
-        Platform.OS ===
-            'ios' &&
+        IS_NATIVE_MOBILE &&
         locationIntroState !==
             'hidden'
     ) {
@@ -4892,162 +4825,86 @@ export const applyCustomCode = (
                             .trim()
                             .toLowerCase();
 
-                    /*
-                     Android's Activity feed does not consistently identify itself
-                     to setHeaderHeight() as exactly "activity"/"activities".
-                     The AfterFilter hook can still correctly identify the Bark
-                     Board from its route props, which is why the nearby block was
-                     being inserted while the extra header height was not applied.
-
-                     Read the same route hints from the navigation object as well.
-                     This keeps the extra height limited to the main Activity feed
-                     and avoids changing Groups/Profile activity screens.
-                    */
-                    let currentRoute = null;
+                    let routeName = '';
 
                     try {
-                        if (
-                            navigation &&
-                            typeof navigation
-                                .getCurrentRoute ===
-                                'function'
-                        ) {
-                            currentRoute =
+                        routeName =
+                            String(
                                 navigation
-                                    .getCurrentRoute();
-                        }
-                    } catch (error) {
-                        currentRoute = null;
-                    }
-
-                    let navigationState = null;
-
-                    try {
-                        if (
-                            navigation &&
-                            typeof navigation
-                                .getState ===
-                                'function'
-                        ) {
-                            navigationState =
+                                    ?.state
+                                    ?.routeName ||
                                 navigation
-                                    .getState();
-                        }
+                                    ?.getCurrentRoute
+                                    ?.()
+                                    ?.name ||
+                                ''
+                            )
+                                .trim()
+                                .toLowerCase();
                     } catch (error) {
-                        navigationState = null;
+                        routeName = '';
                     }
-
-                    const activeStateRoute =
-                        navigationState &&
-                        Array.isArray(
-                            navigationState
-                                .routes
-                        )
-                            ? navigationState
-                                  .routes[
-                                      Number(
-                                          navigationState
-                                              .index
-                                      ) || 0
-                                  ] || null
-                            : null;
-
-                    const routeName =
-                        String(
-                            navigation
-                                ?.state
-                                ?.routeName ||
-                            currentRoute
-                                ?.name ||
-                            activeStateRoute
-                                ?.name ||
-                            ''
-                        )
-                            .trim()
-                            .toLowerCase();
-
-                    const routeObject =
-                        String(
-                            navigation
-                                ?.state
-                                ?.params
-                                ?.item
-                                ?.object ||
-                            currentRoute
-                                ?.params
-                                ?.item
-                                ?.object ||
-                            activeStateRoute
-                                ?.params
-                                ?.item
-                                ?.object ||
-                            ''
-                        )
-                            .trim()
-                            .toLowerCase();
-
-                    const isGroupOrProfileActivity =
-                        routeName
-                            .includes(
-                                'group'
-                            ) ||
-                        routeName
-                            .includes(
-                                'profile'
-                            );
 
                     /*
-                     BuddyBoss's main Activity feed route is HomeActivityScreen.
-                     On Android the setHeaderHeight callback can receive that
-                     route name while filterType and routeObject are both empty.
-                     The previous Android fix therefore never added the extra
-                     header space even though setAfterFilterComponent correctly
-                     inserted the nearby controls.
+                     The previous Android fixes tried to positively identify the
+                     Activity screen before increasing its header. On this BuddyBoss
+                     Android build those identifiers are not reliably supplied to
+                     setHeaderHeight(), so the callback kept returning the original
+                     short height and the Search/composer were clipped.
 
-                     Match the documented main Activity routes explicitly.
+                     Instead, exclude index screens we can positively identify as
+                     NOT the Bark Board. If BuddyBoss supplies an empty/unknown
+                     filter type for its home Activity screen, give the header the
+                     extra room it needs.
                     */
-                    const isMainActivityRoute =
-                        routeName ===
-                            'homeactivityscreen' ||
-                        routeName ===
-                            'activitiesscreen' ||
-                        /^activityscreenmoremenu\d+$/.test(
+                    const definitelyNotActivity =
+                        [
+                            'courses',
+                            'coursecategories',
+                            'members',
+                            'groups',
+                            'forums',
+                            'documents',
+                            'photos',
+                            'products',
+                            'blogs',
+                            'messages',
+                            'notifications',
+                            'achievements',
+                        ].includes(
+                            normalisedFilterType
+                        ) ||
+                        /group|profile|member|course|forum|document|photo|product|blog|message|notification|achievement/.test(
                             routeName
                         );
 
-                    const isMainActivityHeader =
-                        routeObject ===
-                            'activity' ||
-                        routeObject ===
-                            'activities' ||
-                        normalisedFilterType ===
-                            'activity' ||
-                        normalisedFilterType ===
-                            'activities' ||
-                        isMainActivityRoute ||
-                        (
-                            normalisedFilterType
-                                .includes(
-                                    'activit'
-                                ) &&
-                            !isGroupOrProfileActivity
-                        );
-
-                    if (isMainActivityHeader) {
-                        /*
-                         Nearby block is ~150px high including its divider and
-                         spacing. Give Android a few extra pixels so BuddyBoss's
-                         search/composer/topic controls keep their normal space.
-                        */
-                        return (
-                            Number(
-                                defaultHeaderHeight
-                            ) +
-                            156
-                        );
+                    if (definitelyNotActivity) {
+                        return defaultHeaderHeight;
                     }
 
-                    return defaultHeaderHeight;
+                    const numericDefault =
+                        Number(
+                            defaultHeaderHeight
+                        );
+
+                    const safeDefault =
+                        Number.isFinite(
+                            numericDefault
+                        ) &&
+                        numericDefault > 0
+                            ? numericDefault
+                            : 250;
+
+                    /*
+                     BuddyBoss's own example uses an absolute enlarged header when
+                     adding content around the filter row. The nearby block needs
+                     about 160-170px. Enforce a safe minimum so Android cannot
+                     collapse Search and the "Bark it out here" composer again.
+                    */
+                    return Math.max(
+                        safeDefault + 170,
+                        420
+                    );
                 }
             );
     }
