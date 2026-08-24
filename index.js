@@ -4996,6 +4996,25 @@ export const applyCustomCode = (
                                 'profile'
                             );
 
+                    /*
+                     BuddyBoss's main Activity feed route is HomeActivityScreen.
+                     On Android the setHeaderHeight callback can receive that
+                     route name while filterType and routeObject are both empty.
+                     The previous Android fix therefore never added the extra
+                     header space even though setAfterFilterComponent correctly
+                     inserted the nearby controls.
+
+                     Match the documented main Activity routes explicitly.
+                    */
+                    const isMainActivityRoute =
+                        routeName ===
+                            'homeactivityscreen' ||
+                        routeName ===
+                            'activitiesscreen' ||
+                        /^activityscreenmoremenu\d+$/.test(
+                            routeName
+                        );
+
                     const isMainActivityHeader =
                         routeObject ===
                             'activity' ||
@@ -5005,6 +5024,7 @@ export const applyCustomCode = (
                             'activity' ||
                         normalisedFilterType ===
                             'activities' ||
+                        isMainActivityRoute ||
                         (
                             normalisedFilterType
                                 .includes(
