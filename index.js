@@ -4881,7 +4881,8 @@ export const applyCustomCode = (
             .setHeaderHeight(
                 (
                     defaultHeaderHeight,
-                    filterType
+                    filterType,
+                    navigation
                 ) => {
                     const normalisedFilterType =
                         String(
@@ -4891,16 +4892,132 @@ export const applyCustomCode = (
                             .trim()
                             .toLowerCase();
 
-                    if (
+                    /*
+                     Android's Activity feed does not consistently identify itself
+                     to setHeaderHeight() as exactly "activity"/"activities".
+                     The AfterFilter hook can still correctly identify the Bark
+                     Board from its route props, which is why the nearby block was
+                     being inserted while the extra header height was not applied.
+
+                     Read the same route hints from the navigation object as well.
+                     This keeps the extra height limited to the main Activity feed
+                     and avoids changing Groups/Profile activity screens.
+                    */
+                    let currentRoute = null;
+
+                    try {
+                        if (
+                            navigation &&
+                            typeof navigation
+                                .getCurrentRoute ===
+                                'function'
+                        ) {
+                            currentRoute =
+                                navigation
+                                    .getCurrentRoute();
+                        }
+                    } catch (error) {
+                        currentRoute = null;
+                    }
+
+                    let navigationState = null;
+
+                    try {
+                        if (
+                            navigation &&
+                            typeof navigation
+                                .getState ===
+                                'function'
+                        ) {
+                            navigationState =
+                                navigation
+                                    .getState();
+                        }
+                    } catch (error) {
+                        navigationState = null;
+                    }
+
+                    const activeStateRoute =
+                        navigationState &&
+                        Array.isArray(
+                            navigationState
+                                .routes
+                        )
+                            ? navigationState
+                                  .routes[
+                                      Number(
+                                          navigationState
+                                              .index
+                                      ) || 0
+                                  ] || null
+                            : null;
+
+                    const routeName =
+                        String(
+                            navigation
+                                ?.state
+                                ?.routeName ||
+                            currentRoute
+                                ?.name ||
+                            activeStateRoute
+                                ?.name ||
+                            ''
+                        )
+                            .trim()
+                            .toLowerCase();
+
+                    const routeObject =
+                        String(
+                            navigation
+                                ?.state
+                                ?.params
+                                ?.item
+                                ?.object ||
+                            currentRoute
+                                ?.params
+                                ?.item
+                                ?.object ||
+                            activeStateRoute
+                                ?.params
+                                ?.item
+                                ?.object ||
+                            ''
+                        )
+                            .trim()
+                            .toLowerCase();
+
+                    const isGroupOrProfileActivity =
+                        routeName
+                            .includes(
+                                'group'
+                            ) ||
+                        routeName
+                            .includes(
+                                'profile'
+                            );
+
+                    const isMainActivityHeader =
+                        routeObject ===
+                            'activity' ||
+                        routeObject ===
+                            'activities' ||
                         normalisedFilterType ===
                             'activity' ||
                         normalisedFilterType ===
-                            'activities'
-                    ) {
+                            'activities' ||
+                        (
+                            normalisedFilterType
+                                .includes(
+                                    'activit'
+                                ) &&
+                            !isGroupOrProfileActivity
+                        );
+
+                    if (isMainActivityHeader) {
                         /*
                          Nearby block is ~150px high including its divider and
                          spacing. Give Android a few extra pixels so BuddyBoss's
-                         composer/topic controls are never squeezed out.
+                         search/composer/topic controls keep their normal space.
                         */
                         return (
                             Number(
