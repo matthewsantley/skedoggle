@@ -1855,6 +1855,13 @@ const normaliseLocation = (
                 value?.session_id ??
                 0
             ),
+
+        joinId:
+            String(
+                value?.joinId ??
+                value?.join_id ??
+                ''
+            ),
     };
 
     if (
@@ -2364,6 +2371,11 @@ const WalkNativeSidecar = ({
     const acknowledgePoints =
         useCallback(
             async (points) => {
+                const hasSearchLegAcknowledge =
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeSearchPartyLocation ===
+                    'function';
+
                 const hasModeAwareAcknowledge =
                     typeof BuddybossCustomCode
                         ?.acknowledgeLocationForMode ===
@@ -2375,6 +2387,7 @@ const WalkNativeSidecar = ({
                     'function';
 
                 if (
+                    !hasSearchLegAcknowledge &&
                     !hasModeAwareAcknowledge &&
                     !hasLegacyAcknowledge
                 ) {
@@ -3309,6 +3322,9 @@ const postSearchPartyPosition = async (
 
                 ts:
                     point.ts,
+
+                join_id:
+                    credentials.joinId || '',
             }),
         }
     );
@@ -3470,7 +3486,17 @@ const SearchPartyNativeSidecar = ({
                     }
 
                     try {
-                        if (hasModeAwareAcknowledge) {
+                        if (
+                            hasSearchLegAcknowledge &&
+                            credentialsRef.current?.joinId
+                        ) {
+                            await BuddybossCustomCode
+                                .acknowledgeSearchPartyLocation(
+                                    point.ts,
+                                    sessionId,
+                                    credentialsRef.current.joinId
+                                );
+                        } else if (hasModeAwareAcknowledge) {
                             await BuddybossCustomCode
                                 .acknowledgeLocationForMode(
                                     point.ts,
@@ -3548,6 +3574,16 @@ const SearchPartyNativeSidecar = ({
                                     point.sessionId > 0 &&
                                     point.sessionId !==
                                         credentials.sessionId
+                                ) {
+                                    return false;
+                                }
+
+                                if (
+                                    credentials.joinId &&
+                                    point.trackingMode ===
+                                        'search_party' &&
+                                    point.joinId !==
+                                        credentials.joinId
                                 ) {
                                     return false;
                                 }
@@ -3674,7 +3710,27 @@ const SearchPartyNativeSidecar = ({
 
     const stopNativeSearchTracking =
         useCallback(
-            async () => {
+            async (message) => {
+                const requestedJoinId =
+                    String(
+                        message?.joinId ??
+                        message?.join_id ??
+                        ''
+                    );
+
+                const activeCredentials =
+                    credentialsRef.current;
+
+                if (
+                    requestedJoinId &&
+                    activeCredentials?.joinId &&
+                    requestedJoinId !==
+                        activeCredentials.joinId
+                ) {
+                    /* Ignore a delayed Stop from an older search leg. */
+                    return;
+                }
+
                 await flushBufferedPoints();
 
                 try {
@@ -3761,12 +3817,20 @@ const SearchPartyNativeSidecar = ({
                         ''
                     );
 
+                const joinId =
+                    String(
+                        message?.joinId ??
+                        message?.join_id ??
+                        ''
+                    );
+
                 if (
                     !Number.isInteger(sessionId) ||
                     sessionId <= 0 ||
                     !Number.isInteger(userId) ||
                     userId <= 0 ||
-                    !token
+                    !token ||
+                    !joinId
                 ) {
                     Alert.alert(
                         'Search Party tracking error',
@@ -3783,6 +3847,7 @@ const SearchPartyNativeSidecar = ({
                     sessionId,
                     userId,
                     token,
+                    joinId,
                 };
 
                 /*
@@ -3795,7 +3860,10 @@ const SearchPartyNativeSidecar = ({
                     trackingRef.current &&
                     previousCredentials
                         ?.sessionId ===
-                        sessionId
+                        sessionId &&
+                    previousCredentials
+                        ?.joinId ===
+                        joinId
                 ) {
                     return;
                 }
@@ -3835,7 +3903,8 @@ const SearchPartyNativeSidecar = ({
                                 .startSearchPartyTracking(
                                     sessionId,
                                     userId,
-                                    token
+                                    token,
+                                    joinId
                                 );
                     } else if (
                         typeof BuddybossCustomCode
@@ -4041,7 +4110,7 @@ const SearchPartyNativeSidecar = ({
                     action ===
                         'stopSearchPartyTracking'
                 ) {
-                    stopNativeSearchTracking();
+                    stopNativeSearchTracking(message);
                 }
             },
             [
@@ -4111,6 +4180,13 @@ const SearchPartyNativeSidecar = ({
                                 token:
                                     String(
                                         commandData?.token ||
+                                        ''
+                                    ),
+
+                                joinId:
+                                    String(
+                                        commandData?.join_id ||
+                                        commandData?.joinId ||
                                         ''
                                     ),
                             });
