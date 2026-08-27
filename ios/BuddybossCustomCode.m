@@ -194,11 +194,13 @@ static void SkedoggleAppendDebugLog(
 
     NSNumber *_searchPartyUserId;
     NSString *_searchPartyToken;
+    NSString *_searchPartyJoinId;
 
     NSString *_pendingTrackingMode;
     NSNumber *_pendingTrackingSessionId;
     NSNumber *_pendingSearchPartyUserId;
     NSString *_pendingSearchPartyToken;
+    NSString *_pendingSearchPartyJoinId;
 
     /*
      Crash/network recovery: when YES, restarting a walk must keep the
@@ -756,6 +758,8 @@ RCT_REMAP_METHOD(
             self->_trackingMode ?: @"walk",
         @"sessionId":
             self->_trackingSessionId ?: @0,
+        @"joinId":
+            self->_searchPartyJoinId ?: @"",
         @"nativeDirectUpload":
             @(
                 [self->_trackingMode isEqualToString:@"search_party"] &&
@@ -773,6 +777,7 @@ RCT_REMAP_METHOD(
     self->_pendingTrackingSessionId = nil;
     self->_pendingSearchPartyUserId = nil;
     self->_pendingSearchPartyToken = nil;
+    self->_pendingSearchPartyJoinId = nil;
     self->_pendingPreserveBufferedLocations = NO;
 }
 
@@ -786,6 +791,8 @@ RCT_REMAP_METHOD(
         (NSNumber *)userId
     token:
         (NSString *)token
+    joinId:
+        (NSString *)joinId
     preserveBufferedLocations:
         (BOOL)preserveBufferedLocations
     resolver:
@@ -831,9 +838,13 @@ RCT_REMAP_METHOD(
 
         self->_searchPartyToken =
             [token copy];
+
+        self->_searchPartyJoinId =
+            [joinId copy];
     } else {
         self->_searchPartyUserId = nil;
         self->_searchPartyToken = nil;
+        self->_searchPartyJoinId = nil;
     }
 
     self->_trackingStartedAt =
@@ -882,6 +893,8 @@ RCT_REMAP_METHOD(
         (NSNumber *)userId
     token:
         (NSString *)token
+    joinId:
+        (NSString *)joinId
     preserveBufferedLocations:
         (BOOL)preserveBufferedLocations
     resolver:
@@ -942,6 +955,7 @@ RCT_REMAP_METHOD(
 
             NSNumber *safeUserId = nil;
             NSString *safeToken = nil;
+            NSString *safeJoinId = nil;
 
             if (
                 [safeMode isEqualToString:@"search_party"] &&
@@ -953,6 +967,11 @@ RCT_REMAP_METHOD(
 
                 safeToken =
                     [token copy];
+
+                if (joinId.length > 0) {
+                    safeJoinId =
+                        [joinId copy];
+                }
             }
 
             if (self->_isTracking) {
@@ -968,7 +987,16 @@ RCT_REMAP_METHOD(
                         [safeSessionId integerValue];
                 }
 
-                if (sameMode && sameSession) {
+                BOOL sameJoin = YES;
+
+                if ([safeMode isEqualToString:@"search_party"]) {
+                    sameJoin =
+                        (self->_searchPartyJoinId.length > 0 &&
+                         safeJoinId.length > 0 &&
+                         [self->_searchPartyJoinId isEqualToString:safeJoinId]);
+                }
+
+                if (sameMode && sameSession && sameJoin) {
                     if (
                         [safeMode isEqualToString:@"search_party"] &&
                         [safeUserId integerValue] > 0 &&
@@ -979,6 +1007,9 @@ RCT_REMAP_METHOD(
 
                         self->_searchPartyToken =
                             safeToken;
+
+                        self->_searchPartyJoinId =
+                            safeJoinId;
                     }
 
                     SkedoggleAppendDebugLog(
@@ -1048,6 +1079,9 @@ RCT_REMAP_METHOD(
                 self->_pendingSearchPartyToken =
                     safeToken;
 
+                self->_pendingSearchPartyJoinId =
+                    safeJoinId;
+
                 self->_pendingPreserveBufferedLocations =
                     preserveBufferedLocations;
 
@@ -1081,6 +1115,8 @@ RCT_REMAP_METHOD(
                             safeUserId
                         token:
                             safeToken
+                        joinId:
+                            safeJoinId
                         preserveBufferedLocations:
                             preserveBufferedLocations
                         resolver:
@@ -1126,6 +1162,8 @@ RCT_REMAP_METHOD(
                 nil
             token:
                 nil
+            joinId:
+                nil
             preserveBufferedLocations:
                 NO
             resolver:
@@ -1169,6 +1207,8 @@ RCT_REMAP_METHOD(
                 nil
             token:
                 nil
+            joinId:
+                nil
             preserveBufferedLocations:
                 YES
             resolver:
@@ -1207,6 +1247,8 @@ RCT_REMAP_METHOD(
                 nil
             token:
                 nil
+            joinId:
+                nil
             preserveBufferedLocations:
                 NO
             resolver:
@@ -1224,6 +1266,8 @@ RCT_REMAP_METHOD(
         (nonnull NSNumber *)userId
     token:
         (NSString *)token
+    joinId:
+        (NSString *)joinId
     withResolver:
         (RCTPromiseResolveBlock)resolve
     withRejecter:
@@ -1233,7 +1277,8 @@ RCT_REMAP_METHOD(
     if (
         [sessionId integerValue] <= 0 ||
         [userId integerValue] <= 0 ||
-        token.length == 0
+        token.length == 0 ||
+        joinId.length == 0
     ) {
         reject(
             @"invalid_search_party_credentials",
@@ -1254,6 +1299,8 @@ RCT_REMAP_METHOD(
                 userId
             token:
                 token
+            joinId:
+                joinId
             preserveBufferedLocations:
                 NO
             resolver:
@@ -1311,6 +1358,7 @@ RCT_REMAP_METHOD(
             self->_trackingSessionId = nil;
             self->_searchPartyUserId = nil;
             self->_searchPartyToken = nil;
+            self->_searchPartyJoinId = nil;
 
             NSUInteger bufferedCount =
                 self->_bufferedLocations
@@ -1649,6 +1697,9 @@ RCT_REMAP_METHOD(
             NSString *pendingToken =
                 self->_pendingSearchPartyToken;
 
+            NSString *pendingJoinId =
+                self->_pendingSearchPartyJoinId;
+
             BOOL pendingPreserveBufferedLocations =
                 self->_pendingPreserveBufferedLocations;
 
@@ -1666,6 +1717,8 @@ RCT_REMAP_METHOD(
                         pendingUserId
                     token:
                         pendingToken
+                    joinId:
+                        pendingJoinId
                     preserveBufferedLocations:
                         pendingPreserveBufferedLocations
                     resolver:
@@ -1757,8 +1810,10 @@ RCT_REMAP_METHOD(
         (NSNumber *)timestamp
     sessionId:
         (NSNumber *)sessionId
+    joinId:
+        (NSString *)joinId
 {
-    if (!timestamp || !sessionId) {
+    if (!timestamp || !sessionId || joinId.length == 0) {
         return;
     }
 
@@ -1780,7 +1835,8 @@ RCT_REMAP_METHOD(
                         ![point[@"trackingMode"]
                             isEqualToString:@"search_party"] ||
                         [point[@"sessionId"] integerValue] !=
-                            targetSessionId
+                            targetSessionId ||
+                        ![point[@"joinId"] isEqualToString:joinId]
                     ) {
                         return NO;
                     }
@@ -1822,7 +1878,8 @@ RCT_REMAP_METHOD(
             isEqualToString:@"search_party"] ||
         [self->_trackingSessionId integerValue] <= 0 ||
         [self->_searchPartyUserId integerValue] <= 0 ||
-        self->_searchPartyToken.length == 0
+        self->_searchPartyToken.length == 0 ||
+        self->_searchPartyJoinId.length == 0
     ) {
         return;
     }
@@ -1840,6 +1897,7 @@ RCT_REMAP_METHOD(
         @"session_id": sessionId,
         @"user_id": userId,
         @"token": token,
+        @"join_id": self->_searchPartyJoinId ?: @"",
         @"lat": payload[@"lat"] ?: @0,
         @"lng": payload[@"lng"] ?: @0,
         @"accuracy": payload[@"accuracy"] ?: @0,
@@ -1948,6 +2006,8 @@ RCT_REMAP_METHOD(
                                             timestamp
                                         sessionId:
                                             sessionId
+                                        joinId:
+                                            payload[@"joinId"] ?: @""
                                 ];
                             }
                         );
@@ -2134,6 +2194,9 @@ RCT_REMAP_METHOD(
 
             @"sessionId":
                 self->_trackingSessionId ?: @0,
+
+            @"joinId":
+                self->_searchPartyJoinId ?: @"",
 
             @"lat":
                 @(
