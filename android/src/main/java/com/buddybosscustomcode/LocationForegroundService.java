@@ -38,6 +38,9 @@ public class LocationForegroundService
     public static final String EXTRA_SESSION_ID =
             "session_id";
 
+    public static final String EXTRA_JOIN_ID =
+            "join_id";
+
     public static final String MODE_WALK =
             "walk";
 
@@ -113,6 +116,9 @@ public class LocationForegroundService
     private long sessionId =
             0L;
 
+    private String joinId =
+            "";
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -165,18 +171,35 @@ public class LocationForegroundService
                         )
                         : sessionId;
 
+        String requestedJoinId =
+                intent != null
+                        ? intent.getStringExtra(
+                                EXTRA_JOIN_ID
+                        )
+                        : joinId;
+
+        if (requestedJoinId == null) {
+            requestedJoinId = "";
+        }
+
         boolean trackingIdentityChanged =
                 !requestedMode.equals(
                         trackingMode
                 )
                         || requestedSessionId !=
-                        sessionId;
+                        sessionId
+                        || !requestedJoinId.equals(
+                        joinId
+                );
 
         trackingMode =
                 requestedMode;
 
         sessionId =
                 requestedSessionId;
+
+        joinId =
+                requestedJoinId;
 
         /*
          This also handles a sticky restart where intent is null.
@@ -671,7 +694,8 @@ public class LocationForegroundService
                 timestamp,
                 location.getAccuracy(),
                 trackingMode,
-                sessionId
+                sessionId,
+                joinId
         );
 
         boolean emitted =
@@ -682,7 +706,8 @@ public class LocationForegroundService
                                 timestamp,
                                 location.getAccuracy(),
                                 trackingMode,
-                                sessionId
+                                sessionId,
+                                joinId
                         );
 
         Log.i(
