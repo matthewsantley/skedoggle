@@ -1396,8 +1396,8 @@ const requestAndroidWalkPermissions =
         };
     };
 
-const getPageUrl = (props) => {
-    const candidates = [
+const getPageReferences = (props) => {
+    return [
         props?.url,
         props?.source?.uri,
         props?.route?.params?.url,
@@ -1416,16 +1416,21 @@ const getPageUrl = (props) => {
         props?.slug,
         props?.screenId,
         props?.route?.name,
-    ];
+    ].filter(
+        (candidate) =>
+            typeof candidate === 'string' &&
+            candidate.trim().length > 0
+    );
+};
 
-    return (
-        candidates.find(
-            (candidate) =>
-                typeof candidate ===
-                    'string' &&
-                candidate.trim().length > 0
-        ) ||
-        ''
+const getPageUrl = (props) => {
+    const candidates = getPageReferences(props);
+    return candidates[0] || '';
+};
+
+const pagePropsMatch = (props, slug) => {
+    return getPageReferences(props).some(
+        (candidate) => pageReferenceMatches(candidate, slug)
     );
 };
 
@@ -3386,6 +3391,19 @@ const SearchPartyNativeSidecar = ({
 
     useEffect(
         () => {
+            try {
+                BuddybossCustomCode?.logDiagnostic?.(
+                    'SearchPartyNativeSidecar mounted'
+                );
+            } catch (error) {
+                /* Diagnostic logging must never affect tracking. */
+            }
+        },
+        []
+    );
+
+    useEffect(
+        () => {
             let cancelled =
                 false;
 
@@ -4096,6 +4114,19 @@ const SearchPartyNativeSidecar = ({
 
                 const action =
                     message?.action;
+
+                if (
+                    action === 'startSearchPartyTracking' ||
+                    action === 'stopSearchPartyTracking'
+                ) {
+                    try {
+                        BuddybossCustomCode?.logDiagnostic?.(
+                            `Search Party WebView command received: ${action}`
+                        );
+                    } catch (error) {
+                        /* Diagnostic logging must never affect tracking. */
+                    }
+                }
 
                 if (
                     action ===
@@ -5049,6 +5080,12 @@ export const applyCustomCode = (
             const pageUrl =
                 getPageUrl(props);
 
+            const isWalkTrackerPage =
+                pagePropsMatch(props, 'track-walk');
+
+            const isSearchPartyPage =
+                pagePropsMatch(props, 'search-party');
+
             /*
              Track Walk and Search Party keep the same shared introduction
              as a fallback and also mount their native GPS sidecars.
@@ -5059,9 +5096,7 @@ export const applyCustomCode = (
              so their existing WebView geolocation behaviour is not altered.
             */
             if (
-                isWalkTrackerUrl(
-                    pageUrl
-                )
+                isWalkTrackerPage
             ) {
                 return React.createElement(
                     WalkNativeSidecar,
@@ -5073,9 +5108,7 @@ export const applyCustomCode = (
             }
 
             if (
-                isSearchPartyUrl(
-                    pageUrl
-                )
+                isSearchPartyPage
             ) {
                 return React.createElement(
                     SearchPartyNativeSidecar,
