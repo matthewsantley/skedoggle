@@ -45,6 +45,9 @@ const BRIDGE_SECRET =
 const SEARCH_PARTY_POSITION_URL =
     'https://skedoggle.com/wp-json/skedoggle/v1/native-search-position';
 
+const SEARCH_PARTY_COMMAND_URL =
+    'https://skedoggle.com/wp-json/skedoggle/v1/native-search-command';
+
 let installed = false;
 
 /*
@@ -1764,14 +1767,18 @@ const fetchCommand = async () => {
     return response.json();
 };
 
-const fetchSearchPartyCommand = async () => {
+const fetchSearchPartyCommand = async (
+    userId
+) => {
     const url =
-        BRIDGE_URL +
-        '?mode=command' +
-        '&tracking_mode=search_party' +
-        '&secret=' +
+        SEARCH_PARTY_COMMAND_URL +
+        '?secret=' +
         encodeURIComponent(
             BRIDGE_SECRET
+        ) +
+        '&user_id=' +
+        encodeURIComponent(
+            String(userId || 0)
         ) +
         '&_=' +
         Date.now();
@@ -1789,6 +1796,48 @@ const fetchSearchPartyCommand = async () => {
     if (!response.ok) {
         throw new Error(
             `Search Party command request failed: ${response.status}`
+        );
+    }
+
+    return response.json();
+};
+
+const acknowledgeSearchPartyCommand = async (
+    userId,
+    commandId
+) => {
+    const response = await fetch(
+        SEARCH_PARTY_COMMAND_URL,
+        {
+            method: 'POST',
+
+            headers: {
+                Accept:
+                    'application/json',
+
+                'Content-Type':
+                    'application/json',
+            },
+
+            body: JSON.stringify({
+                secret:
+                    BRIDGE_SECRET,
+
+                action:
+                    'ack_command',
+
+                user_id:
+                    Number(userId || 0),
+
+                command_id:
+                    String(commandId || ''),
+            }),
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            `Search Party command acknowledgement failed: ${response.status}`
         );
     }
 
@@ -3358,7 +3407,16 @@ const postSearchPartyPosition = async (
 
 const SearchPartyNativeSidecar = ({
     defaultComponent,
+    pageProps,
 }) => {
+    const currentUserId =
+        Number(
+            pageProps?.user?.userObject?.id ||
+            pageProps?.user?.id ||
+            pageProps?.screenProps?.user?.userObject?.id ||
+            pageProps?.screenProps?.user?.id ||
+            0
+        );
     const [locationIntroState, setLocationIntroState] =
         useState(
             IS_NATIVE_MOBILE
@@ -4157,16 +4215,10 @@ const SearchPartyNativeSidecar = ({
             const acknowledgeSearchCommand =
                 async (commandId) => {
                     try {
-                        await postToBridge({
-                            action:
-                                'ack_command',
-
-                            tracking_mode:
-                                'search_party',
-
-                            command_id:
-                                commandId,
-                        });
+                        await acknowledgeSearchPartyCommand(
+                            currentUserId,
+                            commandId
+                        );
                     } catch (error) {
                         /* The next poll can retry. */
                     }
@@ -4234,9 +4286,15 @@ const SearchPartyNativeSidecar = ({
                 };
 
             const poll = async () => {
+                if (!currentUserId) {
+                    return;
+                }
+
                 try {
                     const command =
-                        await fetchSearchPartyCommand();
+                        await fetchSearchPartyCommand(
+                            currentUserId
+                        );
 
                     if (!cancelled) {
                         await processSearchCommand(
@@ -4247,6 +4305,16 @@ const SearchPartyNativeSidecar = ({
                     /* A later poll retries. */
                 }
             };
+
+            if (!currentUserId) {
+                try {
+                    BuddybossCustomCode?.logDiagnostic?.(
+                        'Search Party command polling unavailable: no BuddyBoss user id'
+                    );
+                } catch (error) {
+                    /* Diagnostic logging must never affect tracking. */
+                }
+            }
 
             poll();
 
@@ -4262,6 +4330,7 @@ const SearchPartyNativeSidecar = ({
             };
         },
         [
+            currentUserId,
             startNativeSearchTracking,
             stopNativeSearchTracking,
         ]
@@ -5151,6 +5220,9 @@ export const applyCustomCode = (
                     {
                         defaultComponent:
                             Component,
+
+                        pageProps:
+                            props,
                     }
                 );
             }
