@@ -102,6 +102,13 @@ public class LocationForegroundService
     private static final float MIN_MEANINGFUL_MOVE_METRES =
             2.0f;
 
+    /*
+     * Search Party only: match the proven iOS/Walk Tracker settling period.
+     * Existing Android Walk Tracking is deliberately unchanged.
+     */
+    private static final long SEARCH_PARTY_WARMUP_NANOS =
+            8_000_000_000L;
+
     private LocationManager locationManager;
 
     private Location lastGoodLocation;
@@ -587,6 +594,30 @@ public class LocationForegroundService
 
                 return;
             }
+
+            /*
+             * Search Party only. Ignore the first eight seconds while Android
+             * GPS settles, matching the final working iOS Search Party.
+             */
+            if (
+                    MODE_SEARCH_PARTY.equals(
+                            trackingMode
+                    )
+                            && sessionDifferenceNanos
+                            < SEARCH_PARTY_WARMUP_NANOS
+            ) {
+                Log.d(
+                        TAG,
+                        "Search Party GPS warming up: "
+                                + (
+                                sessionDifferenceNanos
+                                        / 1_000_000_000.0
+                        )
+                                + "s"
+                );
+
+                return;
+            }
         }
 
         if (lastGoodLocation != null) {
@@ -618,60 +649,150 @@ public class LocationForegroundService
                     );
 
             if (
-                    distanceMetres <
-                            MIN_MEANINGFUL_MOVE_METRES
+                    MODE_SEARCH_PARTY.equals(
+                            trackingMode
+                    )
             ) {
-                Log.d(
-                        TAG,
-                        "Rejected GPS jitter: distance="
-                                + distanceMetres
-                                + "m"
-                );
+                /*
+                 * Search Party mirrors the final working iOS / Walk Tracker
+                 * movement rules before a point reaches the buffer:
+                 *
+                 * jitter allowance:
+                 *   max(5m, min(15m, (currentAcc + previousAcc) / 4))
+                 *
+                 * spike rule for gaps <= 90s:
+                 *   6m/sec * elapsed + clamp(currentAcc + previousAcc, 25m, 80m)
+                 *
+                 * No direction test is used, so doubling back remains valid.
+                 */
+                double previousAccuracy =
+                        lastGoodLocation.getAccuracy();
 
-                return;
-            }
+                double jitterAllowance =
+                        Math.max(
+                                5.0,
+                                Math.min(
+                                        15.0,
+                                        (
+                                                location.getAccuracy()
+                                                        + previousAccuracy
+                                        ) / 4.0
+                                )
+                        );
 
-            /*
-             Do not disable spike filtering after a long gap. The old code
-             stopped checking after 60 seconds, which could allow a large
-             jump immediately after Android resumed GPS delivery.
-            */
-            double accuracyAllowance =
-                    Math.max(
-                            15.0,
-                            Math.min(
-                                    40.0,
-                                    Math.max(
-                                            location.getAccuracy(),
-                                            lastGoodLocation
-                                                    .getAccuracy()
-                                    )
-                            )
+                if (
+                        distanceMetres
+                                < jitterAllowance
+                ) {
+                    Log.d(
+                            TAG,
+                            "Search Party GPS jitter ignored: distance="
+                                    + distanceMetres
+                                    + "m allowance="
+                                    + jitterAllowance
+                                    + "m"
                     );
 
-            double maximumAllowedDistance =
-                    (
-                            MAX_SPEED_METRES_PER_SECOND
-                                    * differenceSeconds
-                    )
-                            + accuracyAllowance;
+                    return;
+                }
 
-            if (distanceMetres
-                    > maximumAllowedDistance) {
+                if (
+                        differenceSeconds > 0.0
+                                && differenceSeconds <= 90.0
+                ) {
+                    double searchAccuracyAllowance =
+                            Math.max(
+                                    25.0,
+                                    Math.min(
+                                            80.0,
+                                            location.getAccuracy()
+                                                    + previousAccuracy
+                                    )
+                            );
 
-                Log.w(
-                        TAG,
-                        "Rejected GPS spike: distance="
-                                + distanceMetres
-                                + "m time="
-                                + differenceSeconds
-                                + "s allowed="
-                                + maximumAllowedDistance
-                                + "m provider="
-                                + provider
-                );
+                    double searchMaximumAllowedDistance =
+                            (
+                                    6.0
+                                            * differenceSeconds
+                            )
+                                    + searchAccuracyAllowance;
 
-                return;
+                    if (
+                            distanceMetres
+                                    > searchMaximumAllowedDistance
+                    ) {
+                        Log.w(
+                                TAG,
+                                "Search Party GPS spike ignored: distance="
+                                        + distanceMetres
+                                        + "m time="
+                                        + differenceSeconds
+                                        + "s allowed="
+                                        + searchMaximumAllowedDistance
+                                        + "m provider="
+                                        + provider
+                        );
+
+                        return;
+                    }
+                }
+
+            } else {
+                /*
+                 * Existing Android Walk Tracking behaviour is intentionally
+                 * preserved exactly.
+                 */
+                if (
+                        distanceMetres <
+                                MIN_MEANINGFUL_MOVE_METRES
+                ) {
+                    Log.d(
+                            TAG,
+                            "Rejected GPS jitter: distance="
+                                    + distanceMetres
+                                    + "m"
+                    );
+
+                    return;
+                }
+
+                double accuracyAllowance =
+                        Math.max(
+                                15.0,
+                                Math.min(
+                                        40.0,
+                                        Math.max(
+                                                location.getAccuracy(),
+                                                lastGoodLocation
+                                                        .getAccuracy()
+                                        )
+                                )
+                        );
+
+                double maximumAllowedDistance =
+                        (
+                                MAX_SPEED_METRES_PER_SECOND
+                                        * differenceSeconds
+                        )
+                                + accuracyAllowance;
+
+                if (distanceMetres
+                        > maximumAllowedDistance) {
+
+                    Log.w(
+                            TAG,
+                            "Rejected GPS spike: distance="
+                                    + distanceMetres
+                                    + "m time="
+                                    + differenceSeconds
+                                    + "s allowed="
+                                    + maximumAllowedDistance
+                                    + "m provider="
+                                    + provider
+                    );
+
+                    return;
+                }
             }
         }
 
