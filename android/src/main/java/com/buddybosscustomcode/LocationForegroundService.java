@@ -113,6 +113,15 @@ public class LocationForegroundService
 
     private Location lastGoodLocation;
 
+    /*
+     * Search Party only: keep one plausible movement fix pending until the
+     * next GPS reading confirms it. This lets us remove short V-shaped
+     * excursions where Android reports excellent accuracy but immediately
+     * snaps back near the previous accepted position. Walk Tracking does not
+     * use this state.
+     */
+    private Location pendingSearchPartyLocation;
+
     private long trackingStartedElapsedNanos;
 
     private boolean updatesRequested;
@@ -222,6 +231,7 @@ public class LocationForegroundService
             }
 
             lastGoodLocation = null;
+            pendingSearchPartyLocation = null;
 
             trackingStartedElapsedNanos =
                     SystemClock.elapsedRealtime()
@@ -620,51 +630,138 @@ public class LocationForegroundService
             }
         }
 
-        if (lastGoodLocation != null) {
-            long previousElapsedNanos =
-                    getLocationElapsedRealtimeNanos(
-                            lastGoodLocation
+        if (
+                MODE_SEARCH_PARTY.equals(
+                        trackingMode
+                )
+        ) {
+            /*
+             * Android Search Party v27.
+             *
+             * Android can report a short false excursion with 2-3m stated
+             * accuracy, so a simple accuracy/speed rule cannot distinguish it
+             * from genuine walking. Keep one plausible movement fix pending.
+             * The following fix either confirms that movement, or reveals a
+             * V-shaped snap-back to the previous accepted position.
+             *
+             * This is deliberately Search Party only. Android Walk Tracking
+             * remains on its existing proven branch below.
+             */
+            if (lastGoodLocation != null) {
+                if (pendingSearchPartyLocation != null) {
+                    long pendingElapsedNanos =
+                            getLocationElapsedRealtimeNanos(
+                                    pendingSearchPartyLocation
+                            );
+
+                    if (locationElapsedNanos <= pendingElapsedNanos) {
+                        Log.d(
+                                TAG,
+                                "Search Party rejected duplicate or out-of-order confirmation point"
+                        );
+
+                        return;
+                    }
+
+                    float previousToPending =
+                            lastGoodLocation.distanceTo(
+                                    pendingSearchPartyLocation
+                            );
+
+                    float pendingToCurrent =
+                            pendingSearchPartyLocation.distanceTo(
+                                    location
+                            );
+
+                    float previousToCurrent =
+                            lastGoodLocation.distanceTo(
+                                    location
+                            );
+
+                    double returnAllowance =
+                            Math.max(
+                                    5.0,
+                                    Math.min(
+                                            15.0,
+                                            (
+                                                    lastGoodLocation.getAccuracy()
+                                                            + location.getAccuracy()
+                                            ) / 4.0
+                                    )
+                            );
+
+                    boolean snappedBack =
+                            previousToPending >= returnAllowance
+                                    && pendingToCurrent >= returnAllowance
+                                    && previousToCurrent < returnAllowance;
+
+                    if (snappedBack) {
+                        Log.w(
+                                TAG,
+                                "Search Party GPS V-spike ignored: previousToPending="
+                                        + previousToPending
+                                        + "m pendingToCurrent="
+                                        + pendingToCurrent
+                                        + "m previousToCurrent="
+                                        + previousToCurrent
+                                        + "m returnAllowance="
+                                        + returnAllowance
+                                        + "m"
+                        );
+
+                        pendingSearchPartyLocation = null;
+
+                        /*
+                         * The current fix is back beside the last accepted
+                         * point, so it adds no useful route detail either.
+                         */
+                        return;
+                    }
+
+                    Location confirmedLocation =
+                            new Location(
+                                    pendingSearchPartyLocation
+                            );
+
+                    pendingSearchPartyLocation = null;
+
+                    acceptLocation(
+                            confirmedLocation
                     );
+                }
 
-            long differenceNanos =
-                    locationElapsedNanos
-                            - previousElapsedNanos;
-
-            if (differenceNanos <= 0) {
-                Log.d(
-                        TAG,
-                        "Rejected duplicate or out-of-order point"
-                );
-
-                return;
-            }
-
-            double differenceSeconds =
-                    differenceNanos
-                            / 1_000_000_000.0;
-
-            float distanceMetres =
-                    lastGoodLocation.distanceTo(
-                            location
-                    );
-
-            if (
-                    MODE_SEARCH_PARTY.equals(
-                            trackingMode
-                    )
-            ) {
                 /*
-                 * Search Party mirrors the final working iOS / Walk Tracker
-                 * movement rules before a point reaches the buffer:
-                 *
-                 * jitter allowance:
-                 *   max(5m, min(15m, (currentAcc + previousAcc) / 4))
-                 *
-                 * spike rule for gaps <= 90s:
-                 *   6m/sec * elapsed + clamp(currentAcc + previousAcc, 25m, 80m)
-                 *
-                 * No direction test is used, so doubling back remains valid.
+                 * lastGoodLocation may now be the just-confirmed pending fix.
+                 * Apply the same proven iOS/Walk movement checks before the
+                 * current reading is allowed to become the next pending fix.
                  */
+                long previousElapsedNanos =
+                        getLocationElapsedRealtimeNanos(
+                                lastGoodLocation
+                        );
+
+                long differenceNanos =
+                        locationElapsedNanos
+                                - previousElapsedNanos;
+
+                if (differenceNanos <= 0) {
+                    Log.d(
+                            TAG,
+                            "Search Party rejected duplicate or out-of-order point"
+                    );
+
+                    return;
+                }
+
+                double differenceSeconds =
+                        differenceNanos
+                                / 1_000_000_000.0;
+
+                float distanceMetres =
+                        lastGoodLocation.distanceTo(
+                                location
+                        );
+
                 double previousAccuracy =
                         lastGoodLocation.getAccuracy();
 
@@ -737,65 +834,115 @@ public class LocationForegroundService
                     }
                 }
 
-            } else {
-                /*
-                 * Existing Android Walk Tracking behaviour is intentionally
-                 * preserved exactly.
-                 */
-                if (
-                        distanceMetres <
-                                MIN_MEANINGFUL_MOVE_METRES
-                ) {
-                    Log.d(
-                            TAG,
-                            "Rejected GPS jitter: distance="
-                                    + distanceMetres
-                                    + "m"
-                    );
-
-                    return;
-                }
-
-                double accuracyAllowance =
-                        Math.max(
-                                15.0,
-                                Math.min(
-                                        40.0,
-                                        Math.max(
-                                                location.getAccuracy(),
-                                                lastGoodLocation
-                                                        .getAccuracy()
-                                        )
-                                )
+                pendingSearchPartyLocation =
+                        new Location(
+                                location
                         );
 
-                double maximumAllowedDistance =
-                        (
-                                MAX_SPEED_METRES_PER_SECOND
-                                        * differenceSeconds
-                        )
-                                + accuracyAllowance;
+                Log.d(
+                        TAG,
+                        "Search Party movement held for confirmation: distance="
+                                + distanceMetres
+                                + "m accuracy="
+                                + location.getAccuracy()
+                );
 
-                if (distanceMetres
-                        > maximumAllowedDistance) {
+                return;
+            }
 
-                    Log.w(
-                            TAG,
-                            "Rejected GPS spike: distance="
-                                    + distanceMetres
-                                    + "m time="
-                                    + differenceSeconds
-                                    + "s allowed="
-                                    + maximumAllowedDistance
-                                    + "m provider="
-                                    + provider
+        } else if (lastGoodLocation != null) {
+            /*
+             * Existing Android Walk Tracking behaviour is intentionally
+             * preserved exactly.
+             */
+            long previousElapsedNanos =
+                    getLocationElapsedRealtimeNanos(
+                            lastGoodLocation
                     );
 
-                    return;
-                }
+            long differenceNanos =
+                    locationElapsedNanos
+                            - previousElapsedNanos;
+
+            if (differenceNanos <= 0) {
+                Log.d(
+                        TAG,
+                        "Rejected duplicate or out-of-order point"
+                );
+
+                return;
+            }
+
+            double differenceSeconds =
+                    differenceNanos
+                            / 1_000_000_000.0;
+
+            float distanceMetres =
+                    lastGoodLocation.distanceTo(
+                            location
+                    );
+
+            if (
+                    distanceMetres <
+                            MIN_MEANINGFUL_MOVE_METRES
+            ) {
+                Log.d(
+                        TAG,
+                        "Rejected GPS jitter: distance="
+                                + distanceMetres
+                                + "m"
+                );
+
+                return;
+            }
+
+            double accuracyAllowance =
+                    Math.max(
+                            15.0,
+                            Math.min(
+                                    40.0,
+                                    Math.max(
+                                            location.getAccuracy(),
+                                            lastGoodLocation
+                                                    .getAccuracy()
+                                    )
+                            )
+                    );
+
+            double maximumAllowedDistance =
+                    (
+                            MAX_SPEED_METRES_PER_SECOND
+                                    * differenceSeconds
+                    )
+                            + accuracyAllowance;
+
+            if (distanceMetres
+                    > maximumAllowedDistance) {
+
+                Log.w(
+                        TAG,
+                        "Rejected GPS spike: distance="
+                                + distanceMetres
+                                + "m time="
+                                + differenceSeconds
+                                + "s allowed="
+                                + maximumAllowedDistance
+                                + "m provider="
+                                + provider
+                );
+
+                return;
             }
         }
 
+        acceptLocation(
+                location
+        );
+    }
+
+    private void acceptLocation(
+            Location location
+    ) {
         lastGoodLocation =
                 new Location(
                         location
