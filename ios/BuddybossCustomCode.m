@@ -2112,6 +2112,26 @@ RCT_REMAP_METHOD(
 
             return;
         }
+
+        /*
+         Search Party now uses the same 8-second GPS warm-up as the proven
+         Walk Tracker. This applies only to search_party mode; Walk Tracking
+         itself is deliberately unchanged.
+        */
+        if (
+            [self->_trackingMode
+                isEqualToString:@"search_party"] &&
+            relativeToStart <
+            8.0
+        ) {
+            SkedoggleAppendDebugLog([
+                NSString stringWithFormat:
+                    @"NATIVE search_party GPS warming up time=%.1f",
+                    relativeToStart
+            ]);
+
+            return;
+        }
     }
 
     if (self->_lastGoodLocation) {
@@ -2136,7 +2156,96 @@ RCT_REMAP_METHOD(
                     self->_lastGoodLocation
         ];
 
-        if (timeDifference <= 60.0) {
+        if (
+            [self->_trackingMode
+                isEqualToString:@"search_party"]
+        ) {
+            /*
+             Exact live Walk Tracker movement rules, applied natively before a
+             Search Party point is uploaded or emitted.
+
+             1) suppress normal stationary GPS drift with an accuracy-aware
+                allowance of 5–15m;
+             2) for gaps <=90s, reject a jump larger than
+                6m/sec * elapsed + an accuracy allowance of 25–80m.
+
+             There is deliberately no direction test, so turning around and
+             retracing a search route remains valid.
+            */
+            CLLocationDistance
+                lastAccuracy =
+                    self->_lastGoodLocation
+                        .horizontalAccuracy;
+
+            CLLocationDistance
+                jitterAllowance =
+                    MAX(
+                        5.0,
+                        MIN(
+                            15.0,
+                            (
+                                accuracy +
+                                lastAccuracy
+                            ) /
+                            4.0
+                        )
+                    );
+
+            if (
+                distance <
+                jitterAllowance
+            ) {
+                SkedoggleAppendDebugLog([
+                    NSString stringWithFormat:
+                        @"NATIVE search_party jitter ignored distance=%.1f allowance=%.1f",
+                        distance,
+                        jitterAllowance
+                ]);
+
+                return;
+            }
+
+            if (timeDifference <= 90.0) {
+                CLLocationDistance
+                    accuracyAllowance =
+                        MAX(
+                            25.0,
+                            MIN(
+                                80.0,
+                                accuracy +
+                                lastAccuracy
+                            )
+                        );
+
+                CLLocationDistance
+                    maximumAllowedDistance =
+                        (
+                            6.0 *
+                            timeDifference
+                        ) +
+                        accuracyAllowance;
+
+                if (
+                    distance >
+                    maximumAllowedDistance
+                ) {
+                    SkedoggleAppendDebugLog([
+                        NSString stringWithFormat:
+                            @"NATIVE search_party spike ignored distance=%.1f time=%.1f allowed=%.1f",
+                            distance,
+                            timeDifference,
+                            maximumAllowedDistance
+                    ]);
+
+                    return;
+                }
+            }
+        } else if (timeDifference <= 60.0) {
+            /*
+             Preserve the existing Walk Tracking native behaviour exactly.
+             Walk Tracker's proven JavaScript filter remains its final route
+             acceptance layer.
+            */
             CLLocationDistance
                 maximumWalkingSpeed =
                     13.5;
