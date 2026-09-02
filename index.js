@@ -5072,6 +5072,42 @@ export const applyCustomCode = (
         return;
     }
 
+    /*
+     Search Party sends start/stop commands from the WordPress page with
+     window.ReactNativeWebView.postMessage(...).
+
+     v18 mounted SearchPartyNativeSidecar correctly, but no PageScreen WebView
+     onMessage handler was registered, so those messages never reached
+     handleWebViewMessage(). BuddyBoss exposes setWebViewProps specifically for
+     passing React Native WebView props. Forward PageScreen messages to the
+     currently mounted Search Party sidecar; when no Search Party is mounted,
+     this is intentionally a no-op.
+
+     This is deliberately global at the PageScreen WebView level because the
+     WebView itself is created by BuddyBoss outside our sidecar component.
+    */
+    if (
+        typeof pageApi
+            .setWebViewProps ===
+        'function'
+    ) {
+        pageApi.setWebViewProps(
+            () => ({
+                onMessage: (event) => {
+                    const handler =
+                        searchPartyWebViewMessageHandler;
+
+                    if (
+                        typeof handler ===
+                        'function'
+                    ) {
+                        handler(event);
+                    }
+                },
+            })
+        );
+    }
+
     pageApi.setPageComponent(
         (
             props,
