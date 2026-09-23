@@ -1505,35 +1505,50 @@ const isSearchPartyUrl = (url) => {
 };
 
 /*
- Lost/stray dog poster pages need the device browser rather than the
- BuddyBoss PageScreen WebView so printing and browser sharing work normally.
- Only the actual poster query parameters are matched; /lost-public/ links used
- for the sightings map remain inside the app.
+ Printable lost/stray dog pages use an explicit WebView message rather than
+ replacing BuddyBoss's PageScreen navigation handler. This is important:
+ BuddyBoss needs its own same-site click handling for report forms, sightings,
+ timelines and other WordPress pages.
 */
-const isPrintableLostDogPosterUrl = (url) => {
-    if (typeof url !== 'string') {
-        return false;
-    }
-
-    const normalised =
-        url.trim().toLowerCase();
-
-    if (
-        !normalised.includes(
-            '/lost-public/'
-        )
-    ) {
-        return false;
-    }
-
+const isSafeExternalHttpUrl = (url) => {
     return (
-        /[?&]ld_poster_post_id=\d+/.test(
-            normalised
-        ) ||
-        /[?&]fs_poster_post_id=\d+/.test(
-            normalised
+        typeof url === 'string' &&
+        /^https?:\/\//i.test(
+            url.trim()
         )
     );
+};
+
+const openSkedoggleExternalUrl = (url) => {
+    if (!isSafeExternalHttpUrl(url)) {
+        return;
+    }
+
+    if (
+        Platform.OS === 'android' &&
+        typeof BuddybossCustomCode
+            ?.openExternalBrowser ===
+            'function'
+    ) {
+        BuddybossCustomCode
+            .openExternalBrowser(url)
+            .catch(() => {
+                /*
+                 Compatibility fallback for an older native build. A current
+                 build uses openExternalBrowser() so Android app links cannot
+                 route the poster straight back into Skedoggle.
+                */
+                Linking
+                    .openURL(url)
+                    .catch(() => {});
+            });
+
+        return;
+    }
+
+    Linking
+        .openURL(url)
+        .catch(() => {});
 };
 
 const isDailyWoofUrl = (url) => {
@@ -5126,6 +5141,43 @@ export const applyCustomCode = (
         pageApi.setWebViewProps(
             () => ({
                 onMessage: (event) => {
+                    const rawData =
+                        event
+                            ?.nativeEvent
+                            ?.data;
+
+                    let message =
+                        rawData;
+
+                    if (
+                        typeof rawData ===
+                        'string'
+                    ) {
+                        try {
+                            message =
+                                JSON.parse(
+                                    rawData
+                                );
+                        } catch (error) {
+                            message =
+                                null;
+                        }
+                    }
+
+                    if (
+                        message?.action ===
+                            'openExternalUrl' &&
+                        isSafeExternalHttpUrl(
+                            message?.url
+                        )
+                    ) {
+                        openSkedoggleExternalUrl(
+                            message.url
+                        );
+
+                        return;
+                    }
+
                     const handler =
                         searchPartyWebViewMessageHandler;
 
@@ -5136,42 +5188,6 @@ export const applyCustomCode = (
                         handler(event);
                     }
                 },
-
-                onShouldStartLoadWithRequest:
-                    (request) => {
-                        const requestedUrl =
-                            request?.url ||
-                            '';
-
-                        if (
-                            !isPrintableLostDogPosterUrl(
-                                requestedUrl
-                            )
-                        ) {
-                            return true;
-                        }
-
-                        /*
-                         Do not let BuddyBoss render the printable poster in
-                         its WebView. Open it with the platform URL handler
-                         (Safari on iOS / the chosen browser on Android).
-                        */
-                        Linking
-                            .openURL(
-                                requestedUrl
-                            )
-                            .catch(
-                                () => {
-                                    /*
-                                     If the browser cannot be opened, leave
-                                     the current app screen untouched rather
-                                     than navigating into a broken print view.
-                                    */
-                                }
-                            );
-
-                        return false;
-                    },
             })
         );
     }

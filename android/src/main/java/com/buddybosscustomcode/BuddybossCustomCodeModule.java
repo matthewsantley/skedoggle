@@ -5,6 +5,8 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -67,6 +69,155 @@ public class BuddybossCustomCodeModule
     @NonNull
     public String getName() {
         return NAME;
+    }
+
+    /**
+     * Open an HTTP(S) URL in a real Android browser rather than allowing an
+     * app-link for skedoggle.com to resolve straight back into Skedoggle.
+     */
+    @ReactMethod
+    public void openExternalBrowser(
+            String url,
+            Promise promise
+    ) {
+        try {
+            if (url == null || url.trim().isEmpty()) {
+                promise.reject(
+                        "invalid_external_url",
+                        "An external URL is required."
+                );
+                return;
+            }
+
+            Uri uri =
+                    Uri.parse(
+                            url.trim()
+                    );
+
+            String scheme =
+                    uri.getScheme();
+
+            if (
+                    scheme == null ||
+                    !(
+                            "https".equalsIgnoreCase(
+                                    scheme
+                            ) ||
+                            "http".equalsIgnoreCase(
+                                    scheme
+                            )
+                    )
+            ) {
+                promise.reject(
+                        "invalid_external_url",
+                        "Only HTTP and HTTPS URLs can be opened externally."
+                );
+                return;
+            }
+
+            ReactApplicationContext context =
+                    getReactApplicationContext();
+
+            PackageManager packageManager =
+                    context.getPackageManager();
+
+            Intent browserIntent =
+                    new Intent(
+                            Intent.ACTION_VIEW,
+                            uri
+                    );
+
+            browserIntent.addCategory(
+                    Intent.CATEGORY_BROWSABLE
+            );
+
+            browserIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+            );
+
+            String ownPackage =
+                    context.getPackageName();
+
+            String selectedPackage =
+                    null;
+
+            ResolveInfo defaultHandler =
+                    packageManager.resolveActivity(
+                            browserIntent,
+                            PackageManager.MATCH_DEFAULT_ONLY
+                    );
+
+            if (
+                    defaultHandler != null &&
+                    defaultHandler.activityInfo != null &&
+                    defaultHandler.activityInfo.packageName != null &&
+                    !ownPackage.equals(
+                            defaultHandler.activityInfo.packageName
+                    )
+            ) {
+                selectedPackage =
+                        defaultHandler.activityInfo.packageName;
+            }
+
+            if (selectedPackage == null) {
+                List<ResolveInfo> handlers =
+                        packageManager.queryIntentActivities(
+                                browserIntent,
+                                PackageManager.MATCH_DEFAULT_ONLY
+                        );
+
+                for (ResolveInfo handler : handlers) {
+                    if (
+                            handler == null ||
+                            handler.activityInfo == null ||
+                            handler.activityInfo.packageName == null
+                    ) {
+                        continue;
+                    }
+
+                    String packageName =
+                            handler.activityInfo.packageName;
+
+                    if (!ownPackage.equals(packageName)) {
+                        selectedPackage =
+                                packageName;
+                        break;
+                    }
+                }
+            }
+
+            if (selectedPackage == null) {
+                promise.reject(
+                        "external_browser_unavailable",
+                        "No external browser is available for this URL."
+                );
+                return;
+            }
+
+            browserIntent.setPackage(
+                    selectedPackage
+            );
+
+            context.startActivity(
+                    browserIntent
+            );
+
+            promise.resolve(
+                    true
+            );
+
+        } catch (Exception exception) {
+            Log.e(
+                    TAG,
+                    "Could not open external browser",
+                    exception
+            );
+
+            promise.reject(
+                    "external_browser_failed",
+                    exception
+            );
+        }
     }
 
     /**
