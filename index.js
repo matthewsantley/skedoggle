@@ -1504,12 +1504,6 @@ const isSearchPartyUrl = (url) => {
     );
 };
 
-/*
- Printable lost/stray dog pages use an explicit WebView message rather than
- replacing BuddyBoss's PageScreen navigation handler. This is important:
- BuddyBoss needs its own same-site click handling for report forms, sightings,
- timelines and other WordPress pages.
-*/
 const isSafeExternalHttpUrl = (url) => {
     return (
         typeof url === 'string' &&
@@ -1520,65 +1514,36 @@ const isSafeExternalHttpUrl = (url) => {
 };
 
 /*
- iOS BuddyBoss can route target="_blank" links back into PageScreen. Capture
- only the printable Lost Dog and Stray Dog poster links before that navigation
- begins. Android retains the WordPress link that already opens its browser.
+ Match only printable poster URLs. The original URL is passed unchanged to
+ Safari; WordPress and Cloudflare retain the same address and configuration.
 */
-const iosPosterClickBridge = String.raw`
+const isPrintableLostDogPosterUrl = (url) => {
+    if (typeof url !== 'string') return false;
+    return (
+        /^https:\/\/(?:www\.)?skedoggle\.com\/lost-public\/?\?/i.test(url) &&
+        /[?&](?:ld|fs)_poster_post_id=\d+(?:[&#]|$)/i.test(url)
+    );
+};
+
+/*
+ A target="_blank" tap takes the WebView's new-window path, bypassing its
+ navigation-request hook. Change only the target to _self before WebKit handles
+ the tap. No click is cancelled and the original URL is never rewritten.
+*/
+const iosPosterSameFrameBridge = String.raw`
 (function () {
-    if (window.__skedogglePosterClickBridgeInstalled) return;
-    window.__skedogglePosterClickBridgeInstalled = true;
+    if (window.__skedogglePosterSameFrameInstalled) return;
+    window.__skedogglePosterSameFrameInstalled = true;
 
     document.addEventListener('click', function (event) {
         var target = event.target;
         var link = target && target.closest ? target.closest('a[href]') : null;
-        if (!link || !window.ReactNativeWebView ||
-            typeof window.ReactNativeWebView.postMessage !== 'function') return;
+        if (!link) return;
 
         var url = link.href;
-        try {
-            var parsed = new URL(url);
-            if (parsed.protocol !== 'https:' ||
-                parsed.hostname !== 'skedoggle.com' ||
-                parsed.pathname.replace(/\/+$/, '') !== '/lost-public') return;
-
-            var posterId = parsed.searchParams.get('ld_poster_post_id') ||
-                parsed.searchParams.get('fs_poster_post_id');
-            if (!posterId || !/^\d+$/.test(posterId)) return;
-
-            event.preventDefault();
-            event.stopImmediatePropagation();
-
-            // Keep the link usable if this app build does not receive WebView
-            // messages, or if iOS keeps the attempted browser open in-app.
-            var fallbackTimer = window.setTimeout(function () {
-                document.removeEventListener('visibilitychange', cancelFallback);
-                window.removeEventListener('pagehide', cancelFallback);
-                window.location.assign(url);
-            }, 2800);
-            function cancelFallback(visibilityEvent) {
-                if (document.hidden || visibilityEvent.type === 'pagehide' || !fallbackTimer) {
-                    window.clearTimeout(fallbackTimer);
-                    fallbackTimer = null;
-                    document.removeEventListener('visibilitychange', cancelFallback);
-                    window.removeEventListener('pagehide', cancelFallback);
-                }
-            }
-            document.addEventListener('visibilitychange', cancelFallback);
-            window.addEventListener('pagehide', cancelFallback);
-
-            try {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                    action: 'openExternalUrl',
-                    url: url
-                }));
-            } catch (bridgeError) {
-                window.clearTimeout(fallbackTimer);
-                fallbackTimer = null;
-                window.location.assign(url);
-            }
-        } catch (error) {
-            // An invalid link keeps its normal navigation behavior.
+        if (/^https:\/\/(?:www\.)?skedoggle\.com\/lost-public\/?\?/i.test(url) &&
+            /[?&](?:ld|fs)_poster_post_id=\d+(?:[&#]|$)/i.test(url)) {
+            link.target = '_self';
         }
     }, true);
 })();
@@ -1612,20 +1577,102 @@ const openSkedoggleExternalUrl = (url) => {
         return;
     }
 
-    /*
-     Use the working public www alias on iOS. The app's universal link for
-     skedoggle.com can otherwise send Linking.openURL back into PageScreen.
-    */
-    const iosBrowserUrl = Platform.OS === 'ios' &&
-        /^https:\/\/skedoggle\.com\/lost-public\/\?(?=[^#]*(?:ld|fs)_poster_post_id=)/i.test(url)
-        ? url.replace(/^https:\/\/skedoggle\.com\//i, 'https://www.skedoggle.com/')
-        : url;
-
     Linking
-        .openURL(iosBrowserUrl)
+        .openURL(url)
         .catch((error) => {
             console.warn('Skedoggle external poster open failed', error);
+            Alert.alert('Could not open Poster', 'Please try again.');
         });
+};
+
+/*
+ BuddyBoss's dedicated PageScreen request hook supplies the context needed to
+ preserve its normal navigation on every link except a printable poster.
+ This follows the default request flow documented for that hook.
+*/
+const handlePageScreenNavigation = (props) => {
+    const req = props?.req;
+    const url = req?.url || '';
+
+    if (
+        Platform.OS === 'ios' &&
+        isPrintableLostDogPosterUrl(url)
+    ) {
+        openSkedoggleExternalUrl(url);
+        return false;
+    }
+
+    if (!req || req.navigationType !== 'click' || props.isLoading || !url) {
+        return true;
+    }
+
+    const {
+        index,
+        currentUrl,
+        nextUrl,
+        isFocused,
+        isExternalDeeplink,
+        openExternal,
+        shouldOpenInExternalBrowser,
+        isSameSite,
+        attemptDeepLink,
+        onNext,
+    } = props;
+
+    if (!nextUrl || nextUrl.pathname == null) return true;
+    if (
+        currentUrl?.pathname === nextUrl.pathname &&
+        currentUrl?.host === nextUrl.host
+    ) return true;
+    if (!isFocused) return false;
+
+    const proceedInApp = () => {
+        if (typeof onNext === 'function') onNext(url, index);
+    };
+
+    if (
+        typeof isExternalDeeplink === 'function' &&
+        isExternalDeeplink(url)
+    ) {
+        Linking.canOpenURL(url)
+            .then((canOpen) => {
+                if (canOpen) {
+                    Linking.openURL(url).catch(proceedInApp);
+                } else {
+                    proceedInApp();
+                }
+            })
+            .catch(proceedInApp);
+        return false;
+    }
+
+    if (
+        openExternal ||
+        (
+            typeof shouldOpenInExternalBrowser === 'function' &&
+            shouldOpenInExternalBrowser(url)
+        )
+    ) {
+        Linking.openURL(url).catch(proceedInApp);
+        return false;
+    }
+
+    const sameSite =
+        typeof isSameSite === 'function'
+            ? isSameSite(url)
+            : Boolean(isSameSite);
+
+    if (sameSite && typeof attemptDeepLink === 'function') {
+        try {
+            attemptDeepLink(req, url, index);
+        } catch (error) {
+            proceedInApp();
+        }
+    } else {
+        proceedInApp();
+    }
+
+    return false;
 };
 
 const isDailyWoofUrl = (url) => {
@@ -5205,6 +5252,18 @@ export const applyCustomCode = (
         return;
     }
 
+    const hasPosterNavigationHook =
+        Platform.OS === 'ios' &&
+        typeof pageApi
+            .setOnShouldStartLoadWithRequest ===
+            'function';
+
+    if (hasPosterNavigationHook) {
+        pageApi.setOnShouldStartLoadWithRequest(
+            handlePageScreenNavigation
+        );
+    }
+
     /*
      Search Party sends start/stop commands from the WordPress page with
      window.ReactNativeWebView.postMessage(...).
@@ -5226,9 +5285,9 @@ export const applyCustomCode = (
     ) {
         pageApi.setWebViewProps(
             () => ({
-                ...(Platform.OS === 'ios' ? {
+                ...(hasPosterNavigationHook ? {
                     injectedJavaScriptBeforeContentLoaded:
-                        iosPosterClickBridge,
+                        iosPosterSameFrameBridge,
                 } : {}),
                 onMessage: (event) => {
                     const rawData =
