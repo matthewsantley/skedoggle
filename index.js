@@ -1548,10 +1548,35 @@ const iosPosterClickBridge = String.raw`
 
             event.preventDefault();
             event.stopImmediatePropagation();
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                action: 'openExternalUrl',
-                url: url
-            }));
+
+            // Keep the link usable if this app build does not receive WebView
+            // messages, or if iOS keeps the attempted browser open in-app.
+            var fallbackTimer = window.setTimeout(function () {
+                document.removeEventListener('visibilitychange', cancelFallback);
+                window.removeEventListener('pagehide', cancelFallback);
+                window.location.assign(url);
+            }, 2800);
+            function cancelFallback(visibilityEvent) {
+                if (document.hidden || visibilityEvent.type === 'pagehide' || !fallbackTimer) {
+                    window.clearTimeout(fallbackTimer);
+                    fallbackTimer = null;
+                    document.removeEventListener('visibilitychange', cancelFallback);
+                    window.removeEventListener('pagehide', cancelFallback);
+                }
+            }
+            document.addEventListener('visibilitychange', cancelFallback);
+            window.addEventListener('pagehide', cancelFallback);
+
+            try {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    action: 'openExternalUrl',
+                    url: url
+                }));
+            } catch (bridgeError) {
+                window.clearTimeout(fallbackTimer);
+                fallbackTimer = null;
+                window.location.assign(url);
+            }
         } catch (error) {
             // An invalid link keeps its normal navigation behavior.
         }
@@ -1587,9 +1612,20 @@ const openSkedoggleExternalUrl = (url) => {
         return;
     }
 
+    /*
+     Use the working public www alias on iOS. The app's universal link for
+     skedoggle.com can otherwise send Linking.openURL back into PageScreen.
+    */
+    const iosBrowserUrl = Platform.OS === 'ios' &&
+        /^https:\/\/skedoggle\.com\/lost-public\/\?(?=[^#]*(?:ld|fs)_poster_post_id=)/i.test(url)
+        ? url.replace(/^https:\/\/skedoggle\.com\//i, 'https://www.skedoggle.com/')
+        : url;
+
     Linking
-        .openURL(url)
-        .catch(() => {});
+        .openURL(iosBrowserUrl)
+        .catch((error) => {
+            console.warn('Skedoggle external poster open failed', error);
+        });
 };
 
 const isDailyWoofUrl = (url) => {
