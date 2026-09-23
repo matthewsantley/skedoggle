@@ -3603,8 +3603,14 @@ const SearchPartyNativeSidecar = ({
         useCallback(
             async (
                 points,
-                sessionId
+                sessionId,
+                joinId
             ) => {
+                const hasSearchLegAcknowledge =
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeSearchPartyLocation ===
+                    'function';
+
                 const hasModeAwareAcknowledge =
                     typeof BuddybossCustomCode
                         ?.acknowledgeLocationForMode ===
@@ -3616,6 +3622,7 @@ const SearchPartyNativeSidecar = ({
                     'function';
 
                 if (
+                    !hasSearchLegAcknowledge &&
                     !hasModeAwareAcknowledge &&
                     !hasLegacyAcknowledge
                 ) {
@@ -3630,13 +3637,13 @@ const SearchPartyNativeSidecar = ({
                     try {
                         if (
                             hasSearchLegAcknowledge &&
-                            credentialsRef.current?.joinId
+                            joinId
                         ) {
                             await BuddybossCustomCode
                                 .acknowledgeSearchPartyLocation(
                                     point.ts,
                                     sessionId,
-                                    credentialsRef.current.joinId
+                                    joinId
                                 );
                         } else if (hasModeAwareAcknowledge) {
                             await BuddybossCustomCode
@@ -3780,7 +3787,8 @@ const SearchPartyNativeSidecar = ({
                     if (uploaded.length > 0) {
                         await acknowledgePoints(
                             uploaded,
-                            credentials.sessionId
+                            credentials.sessionId,
+                            credentials.joinId
                         );
                     }
 
@@ -3792,7 +3800,8 @@ const SearchPartyNativeSidecar = ({
                     if (uploaded.length > 0) {
                         await acknowledgePoints(
                             uploaded,
-                            credentials.sessionId
+                            credentials.sessionId,
+                            credentials.joinId
                         );
                     }
 
