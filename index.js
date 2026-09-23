@@ -1519,6 +1519,47 @@ const isSafeExternalHttpUrl = (url) => {
     );
 };
 
+/*
+ iOS BuddyBoss can route target="_blank" links back into PageScreen. Capture
+ only the printable Lost Dog and Stray Dog poster links before that navigation
+ begins. Android retains the WordPress link that already opens its browser.
+*/
+const iosPosterClickBridge = String.raw`
+(function () {
+    if (window.__skedogglePosterClickBridgeInstalled) return;
+    window.__skedogglePosterClickBridgeInstalled = true;
+
+    document.addEventListener('click', function (event) {
+        var target = event.target;
+        var link = target && target.closest ? target.closest('a[href]') : null;
+        if (!link || !window.ReactNativeWebView ||
+            typeof window.ReactNativeWebView.postMessage !== 'function') return;
+
+        var url = link.href;
+        try {
+            var parsed = new URL(url);
+            if (parsed.protocol !== 'https:' ||
+                parsed.hostname !== 'skedoggle.com' ||
+                parsed.pathname.replace(/\/+$/, '') !== '/lost-public') return;
+
+            var posterId = parsed.searchParams.get('ld_poster_post_id') ||
+                parsed.searchParams.get('fs_poster_post_id');
+            if (!posterId || !/^\d+$/.test(posterId)) return;
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+                action: 'openExternalUrl',
+                url: url
+            }));
+        } catch (error) {
+            // An invalid link keeps its normal navigation behavior.
+        }
+    }, true);
+})();
+true;
+`;
+
 const openSkedoggleExternalUrl = (url) => {
     if (!isSafeExternalHttpUrl(url)) {
         return;
@@ -5140,6 +5181,10 @@ export const applyCustomCode = (
     ) {
         pageApi.setWebViewProps(
             () => ({
+                ...(Platform.OS === 'ios' ? {
+                    injectedJavaScriptBeforeContentLoaded:
+                        iosPosterClickBridge,
+                } : {}),
                 onMessage: (event) => {
                     const rawData =
                         event
