@@ -1396,8 +1396,8 @@ const requestAndroidWalkPermissions =
         };
     };
 
-const getPageUrl = (props) => {
-    const candidates = [
+const getPageReferences = (props) => {
+    return [
         props?.url,
         props?.source?.uri,
         props?.route?.params?.url,
@@ -1416,16 +1416,21 @@ const getPageUrl = (props) => {
         props?.slug,
         props?.screenId,
         props?.route?.name,
-    ];
+    ].filter(
+        (candidate) =>
+            typeof candidate === 'string' &&
+            candidate.trim().length > 0
+    );
+};
 
-    return (
-        candidates.find(
-            (candidate) =>
-                typeof candidate ===
-                    'string' &&
-                candidate.trim().length > 0
-        ) ||
-        ''
+const getPageUrl = (props) => {
+    const candidates = getPageReferences(props);
+    return candidates[0] || '';
+};
+
+const pagePropsMatch = (props, slug) => {
+    return getPageReferences(props).some(
+        (candidate) => pageReferenceMatches(candidate, slug)
     );
 };
 
@@ -1496,6 +1501,38 @@ const isSearchPartyUrl = (url) => {
     return pageReferenceMatches(
         url,
         'search-party'
+    );
+};
+
+/*
+ Lost/stray dog poster pages need the device browser rather than the
+ BuddyBoss PageScreen WebView so printing and browser sharing work normally.
+ Only the actual poster query parameters are matched; /lost-public/ links used
+ for the sightings map remain inside the app.
+*/
+const isPrintableLostDogPosterUrl = (url) => {
+    if (typeof url !== 'string') {
+        return false;
+    }
+
+    const normalised =
+        url.trim().toLowerCase();
+
+    if (
+        !normalised.includes(
+            '/lost-public/'
+        )
+    ) {
+        return false;
+    }
+
+    return (
+        /[?&]ld_poster_post_id=\d+/.test(
+            normalised
+        ) ||
+        /[?&]fs_poster_post_id=\d+/.test(
+            normalised
+        )
     );
 };
 
@@ -1854,6 +1891,13 @@ const normaliseLocation = (
                 value?.sessionId ??
                 value?.session_id ??
                 0
+            ),
+
+        joinId:
+            String(
+                value?.joinId ??
+                value?.join_id ??
+                ''
             ),
     };
 
@@ -2364,6 +2408,11 @@ const WalkNativeSidecar = ({
     const acknowledgePoints =
         useCallback(
             async (points) => {
+                const hasSearchLegAcknowledge =
+                    typeof BuddybossCustomCode
+                        ?.acknowledgeSearchPartyLocation ===
+                    'function';
+
                 const hasModeAwareAcknowledge =
                     typeof BuddybossCustomCode
                         ?.acknowledgeLocationForMode ===
@@ -2375,6 +2424,7 @@ const WalkNativeSidecar = ({
                     'function';
 
                 if (
+                    !hasSearchLegAcknowledge &&
                     !hasModeAwareAcknowledge &&
                     !hasLegacyAcknowledge
                 ) {
@@ -3309,6 +3359,9 @@ const postSearchPartyPosition = async (
 
                 ts:
                     point.ts,
+
+                join_id:
+                    credentials.joinId || '',
             }),
         }
     );
@@ -3367,6 +3420,19 @@ const SearchPartyNativeSidecar = ({
         useRef(
             AppState.currentState
         );
+
+    useEffect(
+        () => {
+            try {
+                BuddybossCustomCode?.logDiagnostic?.(
+                    'SearchPartyNativeSidecar mounted'
+                );
+            } catch (error) {
+                /* Diagnostic logging must never affect tracking. */
+            }
+        },
+        []
+    );
 
     useEffect(
         () => {
@@ -3470,7 +3536,17 @@ const SearchPartyNativeSidecar = ({
                     }
 
                     try {
-                        if (hasModeAwareAcknowledge) {
+                        if (
+                            hasSearchLegAcknowledge &&
+                            credentialsRef.current?.joinId
+                        ) {
+                            await BuddybossCustomCode
+                                .acknowledgeSearchPartyLocation(
+                                    point.ts,
+                                    sessionId,
+                                    credentialsRef.current.joinId
+                                );
+                        } else if (hasModeAwareAcknowledge) {
                             await BuddybossCustomCode
                                 .acknowledgeLocationForMode(
                                     point.ts,
@@ -3548,6 +3624,16 @@ const SearchPartyNativeSidecar = ({
                                     point.sessionId > 0 &&
                                     point.sessionId !==
                                         credentials.sessionId
+                                ) {
+                                    return false;
+                                }
+
+                                if (
+                                    credentials.joinId &&
+                                    point.trackingMode ===
+                                        'search_party' &&
+                                    point.joinId !==
+                                        credentials.joinId
                                 ) {
                                     return false;
                                 }
@@ -3674,7 +3760,27 @@ const SearchPartyNativeSidecar = ({
 
     const stopNativeSearchTracking =
         useCallback(
-            async () => {
+            async (message) => {
+                const requestedJoinId =
+                    String(
+                        message?.joinId ??
+                        message?.join_id ??
+                        ''
+                    );
+
+                const activeCredentials =
+                    credentialsRef.current;
+
+                if (
+                    requestedJoinId &&
+                    activeCredentials?.joinId &&
+                    requestedJoinId !==
+                        activeCredentials.joinId
+                ) {
+                    /* Ignore a delayed Stop from an older search leg. */
+                    return;
+                }
+
                 await flushBufferedPoints();
 
                 try {
@@ -3761,12 +3867,20 @@ const SearchPartyNativeSidecar = ({
                         ''
                     );
 
+                const joinId =
+                    String(
+                        message?.joinId ??
+                        message?.join_id ??
+                        ''
+                    );
+
                 if (
                     !Number.isInteger(sessionId) ||
                     sessionId <= 0 ||
                     !Number.isInteger(userId) ||
                     userId <= 0 ||
-                    !token
+                    !token ||
+                    !joinId
                 ) {
                     Alert.alert(
                         'Search Party tracking error',
@@ -3783,6 +3897,7 @@ const SearchPartyNativeSidecar = ({
                     sessionId,
                     userId,
                     token,
+                    joinId,
                 };
 
                 /*
@@ -3795,7 +3910,10 @@ const SearchPartyNativeSidecar = ({
                     trackingRef.current &&
                     previousCredentials
                         ?.sessionId ===
-                        sessionId
+                        sessionId &&
+                    previousCredentials
+                        ?.joinId ===
+                        joinId
                 ) {
                     return;
                 }
@@ -3835,7 +3953,8 @@ const SearchPartyNativeSidecar = ({
                                 .startSearchPartyTracking(
                                     sessionId,
                                     userId,
-                                    token
+                                    token,
+                                    joinId
                                 );
                     } else if (
                         typeof BuddybossCustomCode
@@ -4029,6 +4148,19 @@ const SearchPartyNativeSidecar = ({
                     message?.action;
 
                 if (
+                    action === 'startSearchPartyTracking' ||
+                    action === 'stopSearchPartyTracking'
+                ) {
+                    try {
+                        BuddybossCustomCode?.logDiagnostic?.(
+                            `Search Party WebView command received: ${action}`
+                        );
+                    } catch (error) {
+                        /* Diagnostic logging must never affect tracking. */
+                    }
+                }
+
+                if (
                     action ===
                         'startSearchPartyTracking'
                 ) {
@@ -4041,7 +4173,7 @@ const SearchPartyNativeSidecar = ({
                     action ===
                         'stopSearchPartyTracking'
                 ) {
-                    stopNativeSearchTracking();
+                    stopNativeSearchTracking(message);
                 }
             },
             [
@@ -4111,6 +4243,13 @@ const SearchPartyNativeSidecar = ({
                                 token:
                                     String(
                                         commandData?.token ||
+                                        ''
+                                    ),
+
+                                joinId:
+                                    String(
+                                        commandData?.join_id ||
+                                        commandData?.joinId ||
                                         ''
                                     ),
                             });
@@ -4965,6 +5104,78 @@ export const applyCustomCode = (
         return;
     }
 
+    /*
+     Search Party sends start/stop commands from the WordPress page with
+     window.ReactNativeWebView.postMessage(...).
+
+     v18 mounted SearchPartyNativeSidecar correctly, but no PageScreen WebView
+     onMessage handler was registered, so those messages never reached
+     handleWebViewMessage(). BuddyBoss exposes setWebViewProps specifically for
+     passing React Native WebView props. Forward PageScreen messages to the
+     currently mounted Search Party sidecar; when no Search Party is mounted,
+     this is intentionally a no-op.
+
+     This is deliberately global at the PageScreen WebView level because the
+     WebView itself is created by BuddyBoss outside our sidecar component.
+    */
+    if (
+        typeof pageApi
+            .setWebViewProps ===
+        'function'
+    ) {
+        pageApi.setWebViewProps(
+            () => ({
+                onMessage: (event) => {
+                    const handler =
+                        searchPartyWebViewMessageHandler;
+
+                    if (
+                        typeof handler ===
+                        'function'
+                    ) {
+                        handler(event);
+                    }
+                },
+
+                onShouldStartLoadWithRequest:
+                    (request) => {
+                        const requestedUrl =
+                            request?.url ||
+                            '';
+
+                        if (
+                            !isPrintableLostDogPosterUrl(
+                                requestedUrl
+                            )
+                        ) {
+                            return true;
+                        }
+
+                        /*
+                         Do not let BuddyBoss render the printable poster in
+                         its WebView. Open it with the platform URL handler
+                         (Safari on iOS / the chosen browser on Android).
+                        */
+                        Linking
+                            .openURL(
+                                requestedUrl
+                            )
+                            .catch(
+                                () => {
+                                    /*
+                                     If the browser cannot be opened, leave
+                                     the current app screen untouched rather
+                                     than navigating into a broken print view.
+                                    */
+                                }
+                            );
+
+                        return false;
+                    },
+            })
+        );
+    }
+
     pageApi.setPageComponent(
         (
             props,
@@ -4972,6 +5183,12 @@ export const applyCustomCode = (
         ) => {
             const pageUrl =
                 getPageUrl(props);
+
+            const isWalkTrackerPage =
+                pagePropsMatch(props, 'track-walk');
+
+            const isSearchPartyPage =
+                pagePropsMatch(props, 'search-party');
 
             /*
              Track Walk and Search Party keep the same shared introduction
@@ -4983,9 +5200,7 @@ export const applyCustomCode = (
              so their existing WebView geolocation behaviour is not altered.
             */
             if (
-                isWalkTrackerUrl(
-                    pageUrl
-                )
+                isWalkTrackerPage
             ) {
                 return React.createElement(
                     WalkNativeSidecar,
@@ -4997,9 +5212,7 @@ export const applyCustomCode = (
             }
 
             if (
-                isSearchPartyUrl(
-                    pageUrl
-                )
+                isSearchPartyPage
             ) {
                 return React.createElement(
                     SearchPartyNativeSidecar,
