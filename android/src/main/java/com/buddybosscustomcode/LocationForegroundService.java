@@ -38,6 +38,9 @@ public class LocationForegroundService
     public static final String EXTRA_SESSION_ID =
             "session_id";
 
+    public static final String EXTRA_JOIN_ID =
+            "join_id";
+
     public static final String MODE_WALK =
             "walk";
 
@@ -99,6 +102,13 @@ public class LocationForegroundService
     private static final float MIN_MEANINGFUL_MOVE_METRES =
             2.0f;
 
+    /*
+     * Search Party only: match the proven iOS/Walk Tracker settling period.
+     * Existing Android Walk Tracking is deliberately unchanged.
+     */
+    private static final long SEARCH_PARTY_WARMUP_NANOS =
+            8_000_000_000L;
+
     private LocationManager locationManager;
 
     private Location lastGoodLocation;
@@ -112,6 +122,9 @@ public class LocationForegroundService
 
     private long sessionId =
             0L;
+
+    private String joinId =
+            "";
 
     @Override
     public void onCreate() {
@@ -165,18 +178,35 @@ public class LocationForegroundService
                         )
                         : sessionId;
 
+        String requestedJoinId =
+                intent != null
+                        ? intent.getStringExtra(
+                                EXTRA_JOIN_ID
+                        )
+                        : joinId;
+
+        if (requestedJoinId == null) {
+            requestedJoinId = "";
+        }
+
         boolean trackingIdentityChanged =
                 !requestedMode.equals(
                         trackingMode
                 )
                         || requestedSessionId !=
-                        sessionId;
+                        sessionId
+                        || !requestedJoinId.equals(
+                        joinId
+                );
 
         trackingMode =
                 requestedMode;
 
         sessionId =
                 requestedSessionId;
+
+        joinId =
+                requestedJoinId;
 
         /*
          This also handles a sticky restart where intent is null.
@@ -564,9 +594,169 @@ public class LocationForegroundService
 
                 return;
             }
+
+            /*
+             * Search Party only. Ignore the first eight seconds while Android
+             * GPS settles, matching the final working iOS Search Party.
+             */
+            if (
+                    MODE_SEARCH_PARTY.equals(
+                            trackingMode
+                    )
+                            && sessionDifferenceNanos
+                            < SEARCH_PARTY_WARMUP_NANOS
+            ) {
+                Log.d(
+                        TAG,
+                        "Search Party GPS warming up: "
+                                + (
+                                sessionDifferenceNanos
+                                        / 1_000_000_000.0
+                        )
+                                + "s"
+                );
+
+                return;
+            }
         }
 
-        if (lastGoodLocation != null) {
+        if (
+                MODE_SEARCH_PARTY.equals(
+                        trackingMode
+                )
+        ) {
+            /*
+             * Android Search Party v28.
+             *
+             * Keep the proven eight-second warm-up and the existing
+             * accuracy/jitter/spike protections, but accept each plausible
+             * movement immediately.
+             *
+             * v27 held every movement point for a later confirmation fix and
+             * tried to detect short V-shaped excursions. Real garden walking
+             * and normal turns can have exactly that shape, so valid movement
+             * was being delayed or discarded.
+             *
+             * This branch remains Search Party only. Android Walk Tracking
+             * below is intentionally unchanged.
+             */
+            if (lastGoodLocation != null) {
+                long previousElapsedNanos =
+                        getLocationElapsedRealtimeNanos(
+                                lastGoodLocation
+                        );
+
+                long differenceNanos =
+                        locationElapsedNanos
+                                - previousElapsedNanos;
+
+                if (differenceNanos <= 0) {
+                    Log.d(
+                            TAG,
+                            "Search Party rejected duplicate or out-of-order point"
+                    );
+
+                    return;
+                }
+
+                double differenceSeconds =
+                        differenceNanos
+                                / 1_000_000_000.0;
+
+                float distanceMetres =
+                        lastGoodLocation.distanceTo(
+                                location
+                        );
+
+                double previousAccuracy =
+                        lastGoodLocation.getAccuracy();
+
+                double jitterAllowance =
+                        Math.max(
+                                5.0,
+                                Math.min(
+                                        15.0,
+                                        (
+                                                location.getAccuracy()
+                                                        + previousAccuracy
+                                        ) / 4.0
+                                )
+                        );
+
+                if (
+                        distanceMetres
+                                < jitterAllowance
+                ) {
+                    Log.d(
+                            TAG,
+                            "Search Party GPS jitter ignored: distance="
+                                    + distanceMetres
+                                    + "m allowance="
+                                    + jitterAllowance
+                                    + "m"
+                    );
+
+                    return;
+                }
+
+                if (
+                        differenceSeconds > 0.0
+                                && differenceSeconds <= 90.0
+                ) {
+                    double searchAccuracyAllowance =
+                            Math.max(
+                                    25.0,
+                                    Math.min(
+                                            80.0,
+                                            location.getAccuracy()
+                                                    + previousAccuracy
+                                    )
+                            );
+
+                    double searchMaximumAllowedDistance =
+                            (
+                                    6.0
+                                            * differenceSeconds
+                            )
+                                    + searchAccuracyAllowance;
+
+                    if (
+                            distanceMetres
+                                    > searchMaximumAllowedDistance
+                    ) {
+                        Log.w(
+                                TAG,
+                                "Search Party GPS spike ignored: distance="
+                                        + distanceMetres
+                                        + "m time="
+                                        + differenceSeconds
+                                        + "s allowed="
+                                        + searchMaximumAllowedDistance
+                                        + "m provider="
+                                        + provider
+                        );
+
+                        return;
+                    }
+                }
+            }
+
+            /*
+             * Valid Search Party movement is accepted immediately. Native
+             * buffering still protects points while React Native is asleep or
+             * the phone is locked.
+             */
+            acceptLocation(
+                    location
+            );
+
+            return;
+
+        } else if (lastGoodLocation != null) {
+            /*
+             * Existing Android Walk Tracking behaviour is intentionally
+             * preserved exactly.
+             */
             long previousElapsedNanos =
                     getLocationElapsedRealtimeNanos(
                             lastGoodLocation
@@ -608,11 +798,6 @@ public class LocationForegroundService
                 return;
             }
 
-            /*
-             Do not disable spike filtering after a long gap. The old code
-             stopped checking after 60 seconds, which could allow a large
-             jump immediately after Android resumed GPS delivery.
-            */
             double accuracyAllowance =
                     Math.max(
                             15.0,
@@ -652,6 +837,14 @@ public class LocationForegroundService
             }
         }
 
+        acceptLocation(
+                location
+        );
+    }
+
+    private void acceptLocation(
+            Location location
+    ) {
         lastGoodLocation =
                 new Location(
                         location
@@ -671,7 +864,8 @@ public class LocationForegroundService
                 timestamp,
                 location.getAccuracy(),
                 trackingMode,
-                sessionId
+                sessionId,
+                joinId
         );
 
         boolean emitted =
@@ -682,7 +876,8 @@ public class LocationForegroundService
                                 timestamp,
                                 location.getAccuracy(),
                                 trackingMode,
-                                sessionId
+                                sessionId,
+                                joinId
                         );
 
         Log.i(
