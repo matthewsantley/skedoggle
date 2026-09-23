@@ -84,7 +84,8 @@ public class BuddybossCustomCodeModule
                 timestamp,
                 accuracy,
                 "",
-                0L
+                0L,
+                ""
         );
     }
 
@@ -101,7 +102,8 @@ public class BuddybossCustomCodeModule
             long timestamp,
             float accuracy,
             String trackingMode,
-            long sessionId
+            long sessionId,
+            String joinId
     ) {
         try {
             ReactApplicationContext context =
@@ -170,6 +172,11 @@ public class BuddybossCustomCodeModule
                     sessionId
             );
 
+            point.putString(
+                    "joinId",
+                    joinId != null ? joinId : ""
+            );
+
             context
                     .getJSModule(
                             DeviceEventManagerModule
@@ -203,6 +210,7 @@ public class BuddybossCustomCodeModule
         startTrackingInternal(
                 LocationForegroundService.MODE_WALK,
                 0L,
+                "",
                 promise
         );
     }
@@ -221,6 +229,7 @@ public class BuddybossCustomCodeModule
                         trackingMode
                 ),
                 (long) sessionId,
+                "",
                 promise
         );
     }
@@ -236,11 +245,21 @@ public class BuddybossCustomCodeModule
             double sessionId,
             double userId,
             String token,
+            String joinId,
             Promise promise
     ) {
+        if (joinId == null || joinId.trim().isEmpty()) {
+            promise.reject(
+                    "invalid_search_party_join",
+                    "A Search Party join ID is required."
+            );
+            return;
+        }
+
         startTrackingInternal(
                 LocationForegroundService.MODE_SEARCH_PARTY,
                 (long) sessionId,
+                joinId.trim(),
                 promise
         );
     }
@@ -248,6 +267,7 @@ public class BuddybossCustomCodeModule
     private void startTrackingInternal(
             String trackingMode,
             long sessionId,
+            String joinId,
             Promise promise
     ) {
         try {
@@ -284,10 +304,18 @@ public class BuddybossCustomCodeModule
              start. Clear any remaining points for this mode so a failed upload
              from a previous walk/search cannot contaminate the new route.
             */
-            LocationBuffer.clearMode(
-                    context,
-                    trackingMode
-            );
+            if (LocationForegroundService.MODE_SEARCH_PARTY.equals(trackingMode)) {
+                LocationBuffer.clearSearchLeg(
+                        context,
+                        sessionId,
+                        joinId
+                );
+            } else {
+                LocationBuffer.clearMode(
+                        context,
+                        trackingMode
+                );
+            }
 
             Intent intent =
                     new Intent(
@@ -307,6 +335,11 @@ public class BuddybossCustomCodeModule
             intent.putExtra(
                     LocationForegroundService.EXTRA_SESSION_ID,
                     sessionId
+            );
+
+            intent.putExtra(
+                    LocationForegroundService.EXTRA_JOIN_ID,
+                    joinId != null ? joinId : ""
             );
 
             ContextCompat.startForegroundService(
@@ -357,6 +390,11 @@ public class BuddybossCustomCodeModule
             result.putDouble(
                     "sessionId",
                     sessionId
+            );
+
+            result.putString(
+                    "joinId",
+                    joinId != null ? joinId : ""
             );
 
             /*
@@ -581,6 +619,31 @@ public class BuddybossCustomCodeModule
         } catch (Exception exception) {
             promise.reject(
                     "ACKNOWLEDGE_LOCATION_FOR_MODE_ERROR",
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+
+
+    @ReactMethod
+    public void acknowledgeSearchPartyLocation(
+            double timestamp,
+            double sessionId,
+            String joinId,
+            Promise promise
+    ) {
+        try {
+            LocationBuffer.acknowledgeSearchPartyLocation(
+                    getReactApplicationContext(),
+                    (long) timestamp,
+                    (long) sessionId,
+                    joinId != null ? joinId : ""
+            );
+            promise.resolve(true);
+        } catch (Exception exception) {
+            promise.reject(
+                    "ACK_SEARCH_LOCATION_ERROR",
                     exception.getMessage(),
                     exception
             );

@@ -56,7 +56,8 @@ public final class LocationBuffer {
                 timestamp,
                 accuracy,
                 "",
-                0L
+                0L,
+                ""
         );
     }
 
@@ -67,7 +68,8 @@ public final class LocationBuffer {
             long timestamp,
             float accuracy,
             String trackingMode,
-            long sessionId
+            long sessionId,
+            String joinId
     ) {
         try {
             JSONArray existing =
@@ -124,10 +126,19 @@ public final class LocationBuffer {
                                 0L
                         ) == sessionId;
 
+                boolean sameJoin =
+                        point.optString(
+                                "joinId",
+                                ""
+                        ).equals(
+                                joinId != null ? joinId : ""
+                        );
+
                 if (
                         sameTimestamp &&
                         sameMode &&
-                        sameSession
+                        sameSession &&
+                        sameJoin
                 ) {
                     continue;
                 }
@@ -178,6 +189,11 @@ public final class LocationBuffer {
             point.put(
                     "sessionId",
                     sessionId
+            );
+
+            point.put(
+                    "joinId",
+                    joinId != null ? joinId : ""
             );
 
             updated.put(
@@ -469,6 +485,62 @@ public final class LocationBuffer {
         );
     }
 
+    public static synchronized void acknowledgeSearchPartyLocation(
+            Context context,
+            long timestamp,
+            long sessionId,
+            String joinId
+    ) {
+        JSONArray existing = readArray(context);
+        JSONArray retained = new JSONArray();
+        String safeJoinId = joinId != null ? joinId : "";
+
+        for (int index = 0; index < existing.length(); index++) {
+            JSONObject point = existing.optJSONObject(index);
+            if (point == null) continue;
+
+            boolean exact =
+                    point.optLong("ts", -1L) == timestamp
+                    && MODE_SEARCH_PARTY_SAFE(point.optString("trackingMode", ""))
+                    && point.optLong("sessionId", 0L) == sessionId
+                    && point.optString("joinId", "").equals(safeJoinId);
+
+            if (!exact) retained.put(point);
+        }
+
+        saveArray(context, retained);
+    }
+
+    public static synchronized void clearSearchLeg(
+            Context context,
+            long sessionId,
+            String joinId
+    ) {
+        JSONArray existing = readArray(context);
+        JSONArray retained = new JSONArray();
+        String safeJoinId = joinId != null ? joinId : "";
+
+        for (int index = 0; index < existing.length(); index++) {
+            JSONObject point = existing.optJSONObject(index);
+            if (point == null) continue;
+
+            boolean sameLeg =
+                    MODE_SEARCH_PARTY_SAFE(point.optString("trackingMode", ""))
+                    && point.optLong("sessionId", 0L) == sessionId
+                    && point.optString("joinId", "").equals(safeJoinId);
+
+            if (!sameLeg) retained.put(point);
+        }
+
+        saveArray(context, retained);
+    }
+
+    private static boolean MODE_SEARCH_PARTY_SAFE(String mode) {
+        return LocationForegroundService.MODE_SEARCH_PARTY.equals(
+                normaliseMode(mode)
+        );
+    }
+
     public static synchronized void clear(
             Context context
     ) {
@@ -562,3 +634,4 @@ public final class LocationBuffer {
         return "";
     }
 }
+
