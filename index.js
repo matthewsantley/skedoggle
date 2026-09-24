@@ -1961,10 +1961,13 @@ const getSearchPartyLoggedInCookie = async () => {
     return '';
 };
 
-const fetchSearchPartyCommand = async () => {
-    const authCookie = await getSearchPartyLoggedInCookie();
+const fetchSearchPartyCommand = async (knownUserId = 0) => {
+    const userId = Number(knownUserId);
+    const authCookie = Number.isInteger(userId) && userId > 0
+        ? ''
+        : await getSearchPartyLoggedInCookie();
 
-    if (!authCookie) {
+    if (!authCookie && (!Number.isInteger(userId) || userId <= 0)) {
         return null;
     }
 
@@ -1974,6 +1977,7 @@ const fetchSearchPartyCommand = async () => {
         encodeURIComponent(
             BRIDGE_SECRET
         ) +
+        (!authCookie ? '&user_id=' + encodeURIComponent(userId) : '') +
         '&_=' +
         Date.now();
 
@@ -1984,8 +1988,9 @@ const fetchSearchPartyCommand = async () => {
                 Accept:
                     'application/json',
 
-                'X-Skedoggle-Logged-In':
-                    authCookie,
+                ...(authCookie ? {
+                    'X-Skedoggle-Logged-In': authCookie,
+                } : {}),
             },
         }
     );
@@ -1996,17 +2001,27 @@ const fetchSearchPartyCommand = async () => {
         );
     }
 
+    const data = await response.json();
+
+    if (
+        Number.isInteger(userId) && userId > 0 &&
+        data?.command && Number(data.user_id) !== userId
+    ) {
+        return null;
+    }
+
     return {
-        ...await response.json(),
+        ...data,
         authCookie,
     };
 };
 
 const acknowledgeSearchPartyCommand = async (
     commandId,
-    authCookie
+    authCookie,
+    userId
 ) => {
-    if (!commandId || !authCookie) return;
+    if (!commandId || (!authCookie && !userId)) return;
 
     const response = await fetch(
         SEARCH_PARTY_COMMAND_URL,
@@ -2015,12 +2030,15 @@ const acknowledgeSearchPartyCommand = async (
             headers: {
                 Accept: 'application/json',
                 'Content-Type': 'application/json',
-                'X-Skedoggle-Logged-In': authCookie,
+                ...(authCookie ? {
+                    'X-Skedoggle-Logged-In': authCookie,
+                } : {}),
             },
             body: JSON.stringify({
                 secret: BRIDGE_SECRET,
                 action: 'ack_command',
                 command_id: commandId,
+                ...(!authCookie ? {user_id: userId} : {}),
             }),
         }
     );
@@ -3606,6 +3624,9 @@ const SearchPartyNativeSidecar = ({
     const lastSearchCommandIdRef =
         useRef('');
 
+    const knownSearchPartyUserIdRef =
+        useRef(0);
+
     const lastSearchStartFailureAtRef =
         useRef(0);
 
@@ -4248,6 +4269,10 @@ const SearchPartyNativeSidecar = ({
                                 'Android location provider did not start.'
                             );
                         }
+
+                        BuddybossCustomCode?.logDiagnostic?.(
+                            'Search Party Android foreground GPS confirmed'
+                        );
                     }
 
                     nativeDirectUploadRef.current =
@@ -4428,6 +4453,10 @@ const SearchPartyNativeSidecar = ({
                     action ===
                         'startSearchPartyTracking'
                 ) {
+                    const userId = Number(message?.userId);
+                    if (Number.isInteger(userId) && userId > 0) {
+                        knownSearchPartyUserIdRef.current = userId;
+                    }
                     startNativeSearchTracking(
                         message
                     );
@@ -4519,9 +4548,16 @@ const SearchPartyNativeSidecar = ({
                     if (succeeded) {
                         await acknowledgeSearchPartyCommand(
                             commandId,
-                            commandData.authCookie
+                            commandData.authCookie,
+                            Number(commandData.user_id)
+                        );
+                        BuddybossCustomCode?.logDiagnostic?.(
+                            `Search Party ${command} command acknowledged`
                         );
                         lastSearchCommandIdRef.current = commandId;
+                        if (command === 'stop') {
+                            knownSearchPartyUserIdRef.current = 0;
+                        }
                     }
                 };
 
@@ -4530,7 +4566,9 @@ const SearchPartyNativeSidecar = ({
                 polling = true;
                 try {
                     const command =
-                        await fetchSearchPartyCommand();
+                        await fetchSearchPartyCommand(
+                            knownSearchPartyUserIdRef.current
+                        );
 
                     if (!cancelled) {
                         await processSearchCommand(

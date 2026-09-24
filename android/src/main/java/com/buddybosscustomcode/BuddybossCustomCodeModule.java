@@ -71,6 +71,11 @@ public class BuddybossCustomCodeModule
         return NAME;
     }
 
+    @ReactMethod
+    public void logDiagnostic(String message) {
+        Log.i(TAG, message != null ? message : "");
+    }
+
     /**
      * Open an HTTP(S) URL in a real Android browser rather than allowing an
      * app-link for skedoggle.com to resolve straight back into Skedoggle.
