@@ -45,6 +45,9 @@ const BRIDGE_SECRET =
 const SEARCH_PARTY_POSITION_URL =
     'https://skedoggle.com/wp-json/skedoggle/v1/native-search-position';
 
+const SEARCH_PARTY_COMMAND_URL =
+    'https://skedoggle.com/wp-json/skedoggle/v1/native-search-command';
+
 let installed = false;
 
 /*
@@ -1935,12 +1938,39 @@ const fetchCommand = async () => {
     return response.json();
 };
 
+const getSearchPartyLoggedInCookie = async () => {
+    for (const siteUrl of [
+        'https://skedoggle.com',
+        'https://www.skedoggle.com',
+    ]) {
+        try {
+            const cookies = await NitroCookies.get(siteUrl);
+
+            for (const [key, cookie] of Object.entries(cookies || {})) {
+                if (/^wordpress_logged_in_/i.test(key)) {
+                    return typeof cookie === 'string'
+                        ? cookie
+                        : String(cookie?.value || '');
+                }
+            }
+        } catch (error) {
+            // Try the other site hostname before the next poll.
+        }
+    }
+
+    return '';
+};
+
 const fetchSearchPartyCommand = async () => {
+    const authCookie = await getSearchPartyLoggedInCookie();
+
+    if (!authCookie) {
+        return null;
+    }
+
     const url =
-        BRIDGE_URL +
-        '?mode=command' +
-        '&tracking_mode=search_party' +
-        '&secret=' +
+        SEARCH_PARTY_COMMAND_URL +
+        '?secret=' +
         encodeURIComponent(
             BRIDGE_SECRET
         ) +
@@ -1953,6 +1983,9 @@ const fetchSearchPartyCommand = async () => {
             headers: {
                 Accept:
                     'application/json',
+
+                'X-Skedoggle-Logged-In':
+                    authCookie,
             },
         }
     );
@@ -1963,7 +1996,40 @@ const fetchSearchPartyCommand = async () => {
         );
     }
 
-    return response.json();
+    return {
+        ...await response.json(),
+        authCookie,
+    };
+};
+
+const acknowledgeSearchPartyCommand = async (
+    commandId,
+    authCookie
+) => {
+    if (!commandId || !authCookie) return;
+
+    const response = await fetch(
+        SEARCH_PARTY_COMMAND_URL,
+        {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-Skedoggle-Logged-In': authCookie,
+            },
+            body: JSON.stringify({
+                secret: BRIDGE_SECRET,
+                action: 'ack_command',
+                command_id: commandId,
+            }),
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            `Search Party command acknowledgement failed: ${response.status}`
+        );
+    }
 };
 
 const normaliseLocation = (
@@ -3540,6 +3606,9 @@ const SearchPartyNativeSidecar = ({
     const lastSearchCommandIdRef =
         useRef('');
 
+    const lastSearchStartFailureAtRef =
+        useRef(0);
+
     const credentialsRef =
         useRef(null);
 
@@ -4035,7 +4104,7 @@ const SearchPartyNativeSidecar = ({
                         'Skedoggle could not securely start Search Party tracking. Leave the Search Party and join it again.'
                     );
 
-                    return;
+                    return false;
                 }
 
                 const previousCredentials =
@@ -4063,7 +4132,7 @@ const SearchPartyNativeSidecar = ({
                         ?.joinId ===
                         joinId
                 ) {
-                    return;
+                    return true;
                 }
 
                 try {
@@ -4085,7 +4154,7 @@ const SearchPartyNativeSidecar = ({
                                 false;
 
                             showSearchPermissionAlert();
-                            return;
+                            return false;
                         }
                     }
 
@@ -4137,6 +4206,50 @@ const SearchPartyNativeSidecar = ({
                     trackingRef.current =
                         true;
 
+                    if (result?.started === false) {
+                        throw new Error(
+                            'Native location service did not start.'
+                        );
+                    }
+
+                    if (Platform.OS === 'android') {
+                        if (
+                            typeof BuddybossCustomCode
+                                ?.getSearchPartyTrackingStatus !== 'function'
+                        ) {
+                            throw new Error(
+                                'Search Party needs the matching Android native module.'
+                            );
+                        }
+
+                        let serviceReady = false;
+
+                        for (let attempt = 0; attempt < 10; attempt++) {
+                            const status =
+                                await BuddybossCustomCode
+                                    .getSearchPartyTrackingStatus();
+
+                            if (
+                                status?.active === true &&
+                                Number(status?.sessionId) === sessionId &&
+                                String(status?.joinId || '') === joinId
+                            ) {
+                                serviceReady = true;
+                                break;
+                            }
+
+                            await new Promise(resolve =>
+                                setTimeout(resolve, 250)
+                            );
+                        }
+
+                        if (!serviceReady) {
+                            throw new Error(
+                                'Android location provider did not start.'
+                            );
+                        }
+                    }
+
                     nativeDirectUploadRef.current =
                         Boolean(
                             result
@@ -4167,6 +4280,7 @@ const SearchPartyNativeSidecar = ({
                                 false;
 
                             showSearchPermissionAlert();
+                            return false;
                         } else if (
                             !preciseLocationEnabled
                         ) {
@@ -4234,6 +4348,7 @@ const SearchPartyNativeSidecar = ({
                     }
 
                     await flushBufferedPoints();
+                    return true;
                 } catch (error) {
                     trackingRef.current =
                         false;
@@ -4263,6 +4378,7 @@ const SearchPartyNativeSidecar = ({
                             )
                         );
                     }
+                    return false;
                 }
             },
             [
@@ -4333,24 +4449,7 @@ const SearchPartyNativeSidecar = ({
     useEffect(
         () => {
             let cancelled = false;
-
-            const acknowledgeSearchCommand =
-                async (commandId) => {
-                    try {
-                        await postToBridge({
-                            action:
-                                'ack_command',
-
-                            tracking_mode:
-                                'search_party',
-
-                            command_id:
-                                commandId,
-                        });
-                    } catch (error) {
-                        /* The next poll can retry. */
-                    }
-                };
+            let polling = false;
 
             const processSearchCommand =
                 async (commandData) => {
@@ -4372,12 +4471,16 @@ const SearchPartyNativeSidecar = ({
                         return;
                     }
 
-                    lastSearchCommandIdRef.current =
-                        commandId;
+                    let succeeded = false;
 
-                    try {
-                        if (command === 'start') {
-                            await startNativeSearchTracking({
+                    if (command === 'start') {
+                        if (
+                            Date.now() - lastSearchStartFailureAtRef.current < 15000
+                        ) {
+                            return;
+                        }
+
+                        succeeded = await startNativeSearchTracking({
                                 sessionId:
                                     Number(
                                         commandData?.session_id
@@ -4400,20 +4503,31 @@ const SearchPartyNativeSidecar = ({
                                         commandData?.joinId ||
                                         ''
                                     ),
-                            });
-                        }
+                        });
 
-                        if (command === 'stop') {
-                            await stopNativeSearchTracking();
-                        }
-                    } finally {
-                        await acknowledgeSearchCommand(
-                            commandId
+                        lastSearchStartFailureAtRef.current =
+                            succeeded ? 0 : Date.now();
+                    }
+
+                    if (command === 'stop') {
+                        await stopNativeSearchTracking({
+                            joinId: commandData?.join_id,
+                        });
+                        succeeded = true;
+                    }
+
+                    if (succeeded) {
+                        await acknowledgeSearchPartyCommand(
+                            commandId,
+                            commandData.authCookie
                         );
+                        lastSearchCommandIdRef.current = commandId;
                     }
                 };
 
             const poll = async () => {
+                if (polling) return;
+                polling = true;
                 try {
                     const command =
                         await fetchSearchPartyCommand();
@@ -4425,6 +4539,8 @@ const SearchPartyNativeSidecar = ({
                     }
                 } catch (error) {
                     /* A later poll retries. */
+                } finally {
+                    polling = false;
                 }
             };
 
