@@ -451,17 +451,11 @@ public class BuddybossCustomCodeModule
             }
 
             /*
-             index.js flushes the existing buffer immediately before calling
-             start. Clear any remaining points for this mode so a failed upload
-             from a previous walk/search cannot contaminate the new route.
+             Walk Tracker retains its existing reset behavior. Search Party
+             keeps its per-join buffer so points collected while locked can
+             still upload if a start command is delivered again.
             */
-            if (LocationForegroundService.MODE_SEARCH_PARTY.equals(trackingMode)) {
-                LocationBuffer.clearSearchLeg(
-                        context,
-                        sessionId,
-                        joinId
-                );
-            } else {
+            if (!LocationForegroundService.MODE_SEARCH_PARTY.equals(trackingMode)) {
                 LocationBuffer.clearMode(
                         context,
                         trackingMode
@@ -572,6 +566,28 @@ public class BuddybossCustomCodeModule
                     exception.getMessage(),
                     exception
             );
+        }
+    }
+
+    @ReactMethod
+    public void getSearchPartyTrackingStatus(Promise promise) {
+        try {
+            android.content.SharedPreferences status =
+                    getReactApplicationContext().getSharedPreferences(
+                            LocationForegroundService.TRACKING_STATUS_PREFS,
+                            android.content.Context.MODE_PRIVATE
+                    );
+
+            WritableMap result = Arguments.createMap();
+            result.putBoolean("active", status.getBoolean("active", false)
+                    && LocationForegroundService.MODE_SEARCH_PARTY.equals(
+                            status.getString("trackingMode", "")
+                    ));
+            result.putDouble("sessionId", status.getLong("sessionId", 0L));
+            result.putString("joinId", status.getString("joinId", ""));
+            promise.resolve(result);
+        } catch (Exception exception) {
+            promise.reject("TRACKING_STATUS_ERROR", exception.getMessage(), exception);
         }
     }
 
@@ -695,6 +711,18 @@ public class BuddybossCustomCodeModule
                         point.optLong(
                                 "sessionId",
                                 0L
+                        )
+                );
+
+                /*
+                 Search Party replay must retain the exact join identity.
+                 index.js rejects a tagged point with a missing joinId.
+                */
+                item.putString(
+                        "joinId",
+                        point.optString(
+                                "joinId",
+                                ""
                         )
                 );
 

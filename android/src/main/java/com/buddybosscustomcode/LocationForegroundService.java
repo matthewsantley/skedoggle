@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.content.SharedPreferences;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -46,6 +47,9 @@ public class LocationForegroundService
 
     public static final String MODE_SEARCH_PARTY =
             "search_party";
+
+    public static final String TRACKING_STATUS_PREFS =
+            "skedoggle_location_service_status";
 
     private static final String TAG =
             "SkedoggleLocation";
@@ -137,6 +141,8 @@ public class LocationForegroundService
 
         trackingStartedElapsedNanos = 0L;
         updatesRequested = false;
+        getSharedPreferences(TRACKING_STATUS_PREFS, MODE_PRIVATE)
+                .edit().putBoolean("active", false).apply();
 
         Log.i(
                 TAG,
@@ -161,13 +167,17 @@ public class LocationForegroundService
             return START_NOT_STICKY;
         }
 
+        SharedPreferences savedIdentity = getSharedPreferences(
+                TRACKING_STATUS_PREFS, MODE_PRIVATE
+        );
+
         String requestedMode =
                 normaliseTrackingMode(
                         intent != null
                                 ? intent.getStringExtra(
                                         EXTRA_TRACKING_MODE
                                 )
-                                : trackingMode
+                                : savedIdentity.getString("trackingMode", MODE_WALK)
                 );
 
         long requestedSessionId =
@@ -176,14 +186,14 @@ public class LocationForegroundService
                                 EXTRA_SESSION_ID,
                                 0L
                         )
-                        : sessionId;
+                        : savedIdentity.getLong("sessionId", 0L);
 
         String requestedJoinId =
                 intent != null
                         ? intent.getStringExtra(
                                 EXTRA_JOIN_ID
                         )
-                        : joinId;
+                        : savedIdentity.getString("joinId", "");
 
         if (requestedJoinId == null) {
             requestedJoinId = "";
@@ -207,6 +217,13 @@ public class LocationForegroundService
 
         joinId =
                 requestedJoinId;
+
+        savedIdentity.edit()
+                .putString("trackingMode", trackingMode)
+                .putLong("sessionId", sessionId)
+                .putString("joinId", joinId)
+                .putBoolean("active", updatesRequested && !trackingIdentityChanged)
+                .apply();
 
         /*
          This also handles a sticky restart where intent is null.
@@ -409,6 +426,9 @@ public class LocationForegroundService
             updatesRequested =
                     true;
 
+            getSharedPreferences(TRACKING_STATUS_PREFS, MODE_PRIVATE)
+                    .edit().putBoolean("active", true).apply();
+
         } catch (SecurityException exception) {
             Log.e(
                     TAG,
@@ -445,6 +465,9 @@ public class LocationForegroundService
         updatesRequested =
                 false;
 
+        getSharedPreferences(TRACKING_STATUS_PREFS, MODE_PRIVATE)
+                .edit().putBoolean("active", false).apply();
+
         lastGoodLocation =
                 null;
 
@@ -454,6 +477,8 @@ public class LocationForegroundService
 
     private void stopTrackingService() {
         stopLocationUpdates();
+        getSharedPreferences(TRACKING_STATUS_PREFS, MODE_PRIVATE)
+                .edit().clear().apply();
 
         /*
          Use the platform stopForeground API for compatibility with
