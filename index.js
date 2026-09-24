@@ -3613,10 +3613,11 @@ const postSearchPartyPosition = async (
 
 const SearchPartyNativeSidecar = ({
     defaultComponent,
+    pageIsSearchParty = false,
 }) => {
     const [locationIntroState, setLocationIntroState] =
         useState(
-            IS_NATIVE_MOBILE
+            IS_NATIVE_MOBILE && pageIsSearchParty
                 ? 'checking'
                 : 'hidden'
         );
@@ -3670,7 +3671,7 @@ const SearchPartyNativeSidecar = ({
 
             const checkLocationIntroduction =
                 async () => {
-                    if (!IS_NATIVE_MOBILE) {
+                    if (!IS_NATIVE_MOBILE || !pageIsSearchParty) {
                         if (!cancelled) {
                             setLocationIntroState(
                                 'hidden'
@@ -3699,7 +3700,7 @@ const SearchPartyNativeSidecar = ({
                     true;
             };
         },
-        []
+        [pageIsSearchParty]
     );
 
     const continueToSearchParty =
@@ -4565,6 +4566,13 @@ const SearchPartyNativeSidecar = ({
                 if (polling) return;
                 polling = true;
                 try {
+                    /*
+                     BuddyBoss does not always supply the page URL in the
+                     PageScreen props. Poll for a Search Party command on all
+                     non-Walk PageScreens so a missing URL cannot prevent the
+                     native tracker from starting. The server only returns a
+                     command for this signed-in member's active search leg.
+                    */
                     const command =
                         await fetchSearchPartyCommand(
                             knownSearchPartyUserIdRef.current
@@ -4587,7 +4595,7 @@ const SearchPartyNativeSidecar = ({
             const timer =
                 setInterval(
                     poll,
-                    1000
+                    pageIsSearchParty ? 1000 : 3000
                 );
 
             return () => {
@@ -4598,6 +4606,7 @@ const SearchPartyNativeSidecar = ({
         [
             startNativeSearchTracking,
             stopNativeSearchTracking,
+            pageIsSearchParty,
         ]
     );
 
@@ -4748,6 +4757,7 @@ const SearchPartyNativeSidecar = ({
     );
 
     if (
+        pageIsSearchParty &&
         IS_NATIVE_MOBILE &&
         locationIntroState !==
             'hidden'
@@ -5426,8 +5436,9 @@ export const applyCustomCode = (
      onMessage handler was registered, so those messages never reached
      handleWebViewMessage(). BuddyBoss exposes setWebViewProps specifically for
      passing React Native WebView props. Forward PageScreen messages to the
-     currently mounted Search Party sidecar; when no Search Party is mounted,
-     this is intentionally a no-op.
+     currently mounted Search Party sidecar. Every non-Walk PageScreen mounts
+     this sidecar so a missing Search Party URL in BuddyBoss props cannot
+     silently drop the start command.
 
      This is deliberately global at the PageScreen WebView level because the
      WebView itself is created by BuddyBoss outside our sidecar component.
@@ -5514,9 +5525,9 @@ export const applyCustomCode = (
              as a fallback and also mount their native GPS sidecars.
 
              Daily Woof is a native Activity Feed screen, so its introduction
-             is registered through activitiesScreenApi below rather than through
-             PageScreen URL matching. Map pages are deliberately left untouched
-             so their existing WebView geolocation behaviour is not altered.
+             is registered through activitiesScreenApi below. Other page
+             screens mount the Search Party command handler without changing
+             their WebView geolocation or showing the location introduction.
             */
             if (
                 isWalkTrackerPage
@@ -5530,19 +5541,13 @@ export const applyCustomCode = (
                 );
             }
 
-            if (
-                isSearchPartyPage
-            ) {
-                return React.createElement(
-                    SearchPartyNativeSidecar,
-                    {
-                        defaultComponent:
-                            Component,
-                    }
-                );
-            }
-
-            return Component;
+            return React.createElement(
+                SearchPartyNativeSidecar,
+                {
+                    defaultComponent: Component,
+                    pageIsSearchParty: isSearchPartyPage,
+                }
+            );
         }
     );
 };
