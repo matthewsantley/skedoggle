@@ -3614,7 +3614,14 @@ const postSearchPartyPosition = async (
 const SearchPartyNativeSidecar = ({
     defaultComponent,
     pageIsSearchParty = false,
+    signedInSearchUserId = 0,
 }) => {
+    /*
+     Walk Tracker can poll its native command without waiting for WebView
+     postMessage. Search Party must also discover its own command without
+     relying on a WebView cookie or message. PageScreen passes the signed-in
+     BuddyBoss member through its own props.
+    */
     const [locationIntroState, setLocationIntroState] =
         useState(
             IS_NATIVE_MOBILE && pageIsSearchParty
@@ -3627,6 +3634,14 @@ const SearchPartyNativeSidecar = ({
 
     const knownSearchPartyUserIdRef =
         useRef(0);
+
+    useEffect(() => {
+        knownSearchPartyUserIdRef.current =
+            Number.isInteger(signedInSearchUserId) &&
+            signedInSearchUserId > 0
+                ? signedInSearchUserId
+                : 0;
+    }, [signedInSearchUserId]);
 
     const lastSearchStartFailureAtRef =
         useRef(0);
@@ -4556,9 +4571,6 @@ const SearchPartyNativeSidecar = ({
                             `Search Party ${command} command acknowledged`
                         );
                         lastSearchCommandIdRef.current = commandId;
-                        if (command === 'stop') {
-                            knownSearchPartyUserIdRef.current = 0;
-                        }
                     }
                 };
 
@@ -5546,6 +5558,8 @@ export const applyCustomCode = (
                 {
                     defaultComponent: Component,
                     pageIsSearchParty: isSearchPartyPage,
+                    signedInSearchUserId:
+                        Number(props?.user?.userObject?.id || 0),
                 }
             );
         }
