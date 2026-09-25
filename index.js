@@ -27,6 +27,7 @@ import NitroCookies from 'react-native-nitro-cookies';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
     useDispatch,
+    useSelector,
 } from 'react-redux';
 import {
     activitiesRequested,
@@ -62,6 +63,9 @@ let buddyBossRootNavigation = null;
  mounted SearchPartyNativeSidecar through this small shared callback.
 */
 let searchPartyWebViewMessageHandler = null;
+
+/* The command host belongs to the navigator, which outlives web pages. */
+let searchPartyNavigatorHostInstalled = false;
 
 const LOCATION_INTRO_COOKIE_URL =
     'https://skedoggle.com';
@@ -4802,6 +4806,71 @@ const SearchPartyNativeSidecar = ({
     );
 };
 
+/*
+ The Search Party may open inside a WebView that is not a BuddyBoss PageScreen.
+ Keep one native command listener with the app navigator so it also survives
+ page changes and a locked screen. The listener still uses per-join credentials.
+*/
+const withSearchPartyCommandHost = AppNavigator => props => {
+    const signedInSearchUserId = useSelector(
+        state => Number(state?.user?.userObject?.id || 0)
+    );
+
+    return (
+        <SearchPartyNativeSidecar
+            defaultComponent={<AppNavigator {...props} />}
+            signedInSearchUserId={signedInSearchUserId}
+        />
+    );
+};
+
+/* Preserve the first-use introduction on PageScreen without a second poller. */
+const SearchPartyPageIntroduction = ({
+    defaultComponent,
+    pageIsSearchParty,
+}) => {
+    const [introState, setIntroState] = useState(
+        IS_NATIVE_MOBILE && pageIsSearchParty ? 'checking' : 'hidden'
+    );
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (!IS_NATIVE_MOBILE || !pageIsSearchParty) {
+            setIntroState('hidden');
+        } else {
+            hasSeenLocationIntroShared().then(seen => {
+                if (!cancelled) {
+                    setIntroState(seen ? 'hidden' : 'visible');
+                }
+            });
+        }
+
+        return () => { cancelled = true; };
+    }, [pageIsSearchParty]);
+
+    if (introState !== 'hidden') {
+        return (
+            <WalkLocationIntroduction
+                loading={introState === 'checking'}
+                saving={introState === 'saving'}
+                onContinue={async () => {
+                    setIntroState('saving');
+                    try {
+                        await markLocationIntroSeenShared();
+                    } catch (error) {
+                        /* Do not block the Search Party if saving fails. */
+                    } finally {
+                        setIntroState('hidden');
+                    }
+                }}
+            />
+        );
+    }
+
+    return defaultComponent;
+};
+
 const styles = StyleSheet.create({
     introSafeArea: {
         flex: 1,
@@ -5099,6 +5168,17 @@ export const applyCustomCode = (
     const navigationApi =
         externalCodeSetup
             ?.navigationApi;
+
+    if (
+        navigationApi &&
+        typeof navigationApi.addComposeHocs === 'function'
+    ) {
+        navigationApi.addComposeHocs(hocs => [
+            ...(hocs || []),
+            withSearchPartyCommandHost,
+        ]);
+        searchPartyNavigatorHostInstalled = true;
+    }
 
     if (
         navigationApi &&
@@ -5441,19 +5521,9 @@ export const applyCustomCode = (
     }
 
     /*
-     Search Party sends start/stop commands from the WordPress page with
-     window.ReactNativeWebView.postMessage(...).
-
-     v18 mounted SearchPartyNativeSidecar correctly, but no PageScreen WebView
-     onMessage handler was registered, so those messages never reached
-     handleWebViewMessage(). BuddyBoss exposes setWebViewProps specifically for
-     passing React Native WebView props. Forward PageScreen messages to the
-     currently mounted Search Party sidecar. Every non-Walk PageScreen mounts
-     this sidecar so a missing Search Party URL in BuddyBoss props cannot
-     silently drop the start command.
-
-     This is deliberately global at the PageScreen WebView level because the
-     WebView itself is created by BuddyBoss outside our sidecar component.
+     Forward messages from BuddyBoss PageScreen web views to the command host.
+     The navigator host also polls the per-member command channel, including
+     when Search Party opens in a different web view with no PageScreen hook.
     */
     if (
         typeof pageApi
@@ -5532,14 +5602,9 @@ export const applyCustomCode = (
             const isSearchPartyPage =
                 pagePropsMatch(props, 'search-party');
 
-            /*
-             Track Walk and Search Party keep the same shared introduction
-             as a fallback and also mount their native GPS sidecars.
-
-             Daily Woof is a native Activity Feed screen, so its introduction
-             is registered through activitiesScreenApi below. Other page
-             screens mount the Search Party command handler without changing
-             their WebView geolocation or showing the location introduction.
+            /* Walk retains its proven page host. The navigator hosts Search
+             Party's tracker; this page only supplies its shared introduction.
+             Older app builds without the navigator hook retain the page host.
             */
             if (
                 isWalkTrackerPage
@@ -5554,7 +5619,9 @@ export const applyCustomCode = (
             }
 
             return React.createElement(
-                SearchPartyNativeSidecar,
+                searchPartyNavigatorHostInstalled
+                    ? SearchPartyPageIntroduction
+                    : SearchPartyNativeSidecar,
                 {
                     defaultComponent: Component,
                     pageIsSearchParty: isSearchPartyPage,
