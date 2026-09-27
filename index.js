@@ -76,6 +76,9 @@ const LOCATION_INTRO_COOKIE_NAME =
 const LOCATION_INTRO_STORAGE_KEY =
     'skedoggle_location_intro_seen_v5';
 
+const FIRST_ACTION_STORAGE_KEY =
+    'skedoggle_first_action_seen_v1';
+
 const IS_NATIVE_MOBILE =
     Platform.OS === 'ios' ||
     Platform.OS === 'android';
@@ -2448,13 +2451,106 @@ const LocationIntroductionOnlySidecar = ({
 };
 
 
-const DailyWoofLocationIntroduction = () => {
+const firstUseChoices = [
+    {
+        title: 'Track a Walk',
+        description: 'Map a walk with your dog.',
+        icon: '🐾',
+        url: 'https://skedoggle.com/track-walk/',
+    },
+    {
+        title: 'Find Dog-Friendly Places',
+        description: 'Discover places and walks nearby.',
+        icon: '🗺️',
+        url: 'https://skedoggle.com/places-map/',
+    },
+    {
+        title: 'Help Find Lost Dogs',
+        description: 'See local reports and ways to help.',
+        icon: '🚨',
+        url: 'https://skedoggle.com/lost-dogs-map/',
+    },
+];
+
+const FirstUseChoiceIntroduction = ({
+    saving,
+    onSelect,
+}) => (
+    <SafeAreaView style={styles.introSafeArea}>
+        <ScrollView
+            contentContainerStyle={styles.choiceContent}
+            showsVerticalScrollIndicator={false}
+        >
+            <View style={styles.introPawCircle}>
+                <Text style={styles.introPaw}>🐾</Text>
+            </View>
+
+            <Text style={styles.introTitle}>
+                Welcome to Skedoggle
+            </Text>
+            <Text style={styles.introLead}>
+                What would you like to do first?
+            </Text>
+
+            {firstUseChoices.map(choice => (
+                <TouchableOpacity
+                    key={choice.url}
+                    accessibilityRole="button"
+                    accessibilityLabel={choice.title}
+                    activeOpacity={0.8}
+                    disabled={saving}
+                    onPress={() => onSelect(choice)}
+                    style={styles.choiceCard}
+                >
+                    <Text style={styles.choiceIcon}>
+                        {choice.icon}
+                    </Text>
+                    <View style={styles.choiceCardText}>
+                        <Text style={styles.choiceCardTitle}>
+                            {choice.title}
+                        </Text>
+                        <Text style={styles.choiceCardDescription}>
+                            {choice.description}
+                        </Text>
+                    </View>
+                    <Text style={styles.choiceArrow}>›</Text>
+                </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+                accessibilityRole="button"
+                activeOpacity={0.8}
+                disabled={saving}
+                onPress={() => onSelect(null)}
+                style={styles.choiceExplore}
+            >
+                {saving ? (
+                    <ActivityIndicator color="#261e8c" />
+                ) : (
+                    <Text style={styles.choiceExploreText}>
+                        Explore Skedoggle
+                    </Text>
+                )}
+            </TouchableOpacity>
+
+            <Text style={styles.introFooter}>
+                You can find all these features in the app whenever you like.
+            </Text>
+        </ScrollView>
+    </SafeAreaView>
+);
+
+const DailyWoofLocationIntroduction = ({
+    navigation: screenNavigation,
+}) => {
     const [introState, setIntroState] =
         useState(
             IS_NATIVE_MOBILE
                 ? 'checking'
                 : 'hidden'
         );
+
+    const choosingRef = useRef(false);
 
     useEffect(
         () => {
@@ -2468,14 +2564,22 @@ const DailyWoofLocationIntroduction = () => {
                     return;
                 }
 
-                const seen =
-                    await hasSeenLocationIntroShared();
+                const [seen, choiceSeen] =
+                    await Promise.all([
+                        hasSeenLocationIntroShared(),
+                        AsyncStorage.getItem(
+                            FIRST_ACTION_STORAGE_KEY
+                        ).then(value => value === '1')
+                            .catch(() => false),
+                    ]);
 
                 if (!cancelled) {
                     setIntroState(
-                        seen
-                            ? 'hidden'
-                            : 'visible'
+                        !seen
+                            ? 'visible'
+                            : choiceSeen
+                                ? 'hidden'
+                                : 'choice'
                     );
                 }
             };
@@ -2489,7 +2593,7 @@ const DailyWoofLocationIntroduction = () => {
         []
     );
 
-    const continueToFeed =
+    const continueToChoices =
         useCallback(
             async () => {
                 setIntroState('saving');
@@ -2501,11 +2605,86 @@ const DailyWoofLocationIntroduction = () => {
                      Never block access to Daily Woof if saving fails.
                     */
                 } finally {
-                    setIntroState('hidden');
+                    let choiceSeen = false;
+                    try {
+                        choiceSeen =
+                            await AsyncStorage.getItem(
+                                FIRST_ACTION_STORAGE_KEY
+                            ) === '1';
+                    } catch (error) {
+                        /* Still let the member choose an action. */
+                    }
+                    setIntroState(
+                        choiceSeen ? 'hidden' : 'choice'
+                    );
                 }
             },
             []
         );
+
+    const chooseFirstAction = useCallback(
+        async (choice) => {
+            if (choosingRef.current) return;
+            choosingRef.current = true;
+            setIntroState('choosing');
+
+            if (choice) {
+                const navigation = [
+                    screenNavigation?.navigation,
+                    screenNavigation,
+                    buddyBossRootNavigation?.navigation,
+                    buddyBossRootNavigation,
+                ].find(candidate =>
+                    typeof candidate?.navigate === 'function'
+                );
+
+                if (!navigation) {
+                    choosingRef.current = false;
+                    setIntroState('choice');
+                    Alert.alert(
+                        'Could not open this page',
+                        'Please choose it from the app menu instead.'
+                    );
+                    return;
+                }
+
+                try {
+                    const action = navigation.navigate(
+                        'PageScreen',
+                        { url: choice.url, title: choice.title }
+                    );
+
+                    // Some BuddyBoss navigation services return an action
+                    // that must be dispatched; React Navigation returns void.
+                    if (
+                        action?.type &&
+                        typeof navigation.dispatch === 'function'
+                    ) {
+                        navigation.dispatch(action);
+                    }
+                } catch (error) {
+                    choosingRef.current = false;
+                    setIntroState('choice');
+                    Alert.alert(
+                        'Could not open this page',
+                        'Please choose it from the app menu instead.'
+                    );
+                    return;
+                }
+            }
+
+            setIntroState('hidden');
+            try {
+                await AsyncStorage.setItem(
+                    FIRST_ACTION_STORAGE_KEY,
+                    '1'
+                );
+            } catch (error) {
+                /* The choice still works if its preference cannot be saved. */
+            }
+        },
+        [screenNavigation]
+    );
 
     if (
         !IS_NATIVE_MOBILE ||
@@ -2520,19 +2699,25 @@ const DailyWoofLocationIntroduction = () => {
             transparent={false}
             visible={true}
             presentationStyle="fullScreen"
-            onRequestClose={() => {}}
+            onRequestClose={() => {
+                if (introState === 'choice') {
+                    chooseFirstAction(null);
+                }
+            }}
         >
-            <WalkLocationIntroduction
-                loading={
-                    introState === 'checking'
-                }
-                saving={
-                    introState === 'saving'
-                }
-                onContinue={
-                    continueToFeed
-                }
-            />
+            {introState === 'choice' ||
+            introState === 'choosing' ? (
+                <FirstUseChoiceIntroduction
+                    saving={introState === 'choosing'}
+                    onSelect={chooseFirstAction}
+                />
+            ) : (
+                <WalkLocationIntroduction
+                    loading={introState === 'checking'}
+                    saving={introState === 'saving'}
+                    onContinue={continueToChoices}
+                />
+            )}
         </Modal>
     );
 };
@@ -4999,6 +5184,74 @@ const styles = StyleSheet.create({
         marginTop: 16,
     },
 
+    choiceContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        paddingTop: 26,
+        paddingBottom: 32,
+    },
+
+    choiceCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        minHeight: 82,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        marginBottom: 12,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e8e5f3',
+        backgroundColor: '#f9f8fd',
+    },
+
+    choiceIcon: {
+        width: 42,
+        fontSize: 26,
+        textAlign: 'center',
+        marginRight: 10,
+    },
+
+    choiceCardText: {
+        flex: 1,
+    },
+
+    choiceCardTitle: {
+        color: '#261e8c',
+        fontSize: 17,
+        lineHeight: 23,
+        fontWeight: '700',
+    },
+
+    choiceCardDescription: {
+        color: '#52525b',
+        fontSize: 14,
+        lineHeight: 20,
+        marginTop: 2,
+    },
+
+    choiceArrow: {
+        color: '#7b58cb',
+        fontSize: 28,
+        lineHeight: 32,
+        marginLeft: 8,
+    },
+
+    choiceExplore: {
+        minHeight: 56,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 10,
+        borderRadius: 28,
+        backgroundColor: '#f0ebfc',
+    },
+
+    choiceExploreText: {
+        color: '#261e8c',
+        fontSize: 17,
+        fontWeight: '700',
+    },
+
     nearbyActivityContainer: {
         backgroundColor:
             '#ffffff',
@@ -5335,7 +5588,9 @@ export const applyCustomCode = (
 
                     return (
                         <View>
-                            <DailyWoofLocationIntroduction />
+                            <DailyWoofLocationIntroduction
+                                navigation={activityProps?.navigation}
+                            />
 
                             <NearbyActivityRadiusFilter
                                 {...activityProps}
@@ -5484,7 +5739,9 @@ export const applyCustomCode = (
 
                     return (
                         <View>
-                            <DailyWoofLocationIntroduction />
+                            <DailyWoofLocationIntroduction
+                                navigation={activityProps?.navigation}
+                            />
 
                             <NearbyActivityRadiusFilter
                                 {...activityProps}
