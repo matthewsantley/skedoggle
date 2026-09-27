@@ -1596,6 +1596,65 @@ const openSkedoggleExternalUrl = (url) => {
 };
 
 /*
+ Report links on the Lost Dogs map use a dedicated in-app PageScreen message.
+ Only these three same-site form URLs can request native navigation.
+*/
+const openSkedoggleReportPage = (url, pageNavigation) => {
+    const match =
+        typeof url === 'string' &&
+        /^https:\/\/(?:www\.)?skedoggle\.com\/(report-lost-dog|report-stray-dog|report-sighting)\/?(?:[?#]|$)/i
+            .exec(url.trim());
+
+    if (!match) return false;
+
+    const titles = {
+        'report-lost-dog': 'Report Lost Dog',
+        'report-stray-dog': 'Report Stray Dog',
+        'report-sighting': 'Report a Sighting',
+    };
+
+    const navigation = [
+        pageNavigation?.navigation,
+        pageNavigation,
+        buddyBossRootNavigation?.navigation,
+        buddyBossRootNavigation,
+    ].find(candidate =>
+        typeof candidate?.navigate === 'function'
+    );
+
+    if (!navigation) {
+        Alert.alert(
+            'Could not open report',
+            'Please try again from the Lost Dogs map.'
+        );
+        return false;
+    }
+
+    try {
+        const action = navigation.navigate(
+            'PageScreen',
+            { url, title: titles[match[1].toLowerCase()] }
+        );
+        if (
+            action?.type &&
+            typeof navigation.dispatch === 'function'
+        ) {
+            navigation.dispatch(action);
+        }
+        return true;
+    } catch (error) {
+        Alert.alert(
+            'Could not open report',
+            'Please try again from the Lost Dogs map.'
+        );
+        return false;
+    }
+};
+
+const reportPageBridgeCapability =
+    'window.skedoggleNativePageNavigationV1 = true; true;';
+
+/*
  BuddyBoss's dedicated PageScreen request hook supplies the context needed to
  preserve its normal navigation on every link except a printable poster.
  This follows the default request flow documented for that hook.
@@ -5788,11 +5847,14 @@ export const applyCustomCode = (
         'function'
     ) {
         pageApi.setWebViewProps(
-            () => ({
-                ...(hasPosterNavigationHook ? {
-                    injectedJavaScriptBeforeContentLoaded:
-                        iosPosterSameFrameBridge,
-                } : {}),
+            (pageProps) => ({
+                injectedJavaScriptBeforeContentLoaded:
+                    (hasPosterNavigationHook
+                        ? iosPosterSameFrameBridge
+                        : '') +
+                    '\n' + reportPageBridgeCapability,
+                injectedJavaScript:
+                    reportPageBridgeCapability,
                 onMessage: (event) => {
                     const rawData =
                         event
@@ -5828,6 +5890,17 @@ export const applyCustomCode = (
                             message.url
                         );
 
+                        return;
+                    }
+
+                    if (
+                        message?.action ===
+                            'openSkedoggleReportPage'
+                    ) {
+                        openSkedoggleReportPage(
+                            message.url,
+                            pageProps?.navigation
+                        );
                         return;
                     }
 
