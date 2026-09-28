@@ -79,6 +79,9 @@ const LOCATION_INTRO_STORAGE_KEY =
 const FIRST_ACTION_STORAGE_KEY =
     'skedoggle_first_action_seen_v1';
 
+const MY_DOGS_WORLD_URL =
+    'https://skedoggle.com/my-dogs-world/';
+
 const IS_NATIVE_MOBILE =
     Platform.OS === 'ios' ||
     Platform.OS === 'android';
@@ -2451,7 +2454,88 @@ const LocationIntroductionOnlySidecar = ({
 };
 
 
+const MyDogsWorldHomeCard = ({
+    navigation: screenNavigation,
+}) => {
+    const openWorld = useCallback(
+        () => {
+            const navigation = [
+                screenNavigation?.navigation,
+                screenNavigation,
+                buddyBossRootNavigation?.navigation,
+                buddyBossRootNavigation,
+            ].find(candidate =>
+                typeof candidate?.navigate === 'function'
+            );
+
+            if (!navigation) {
+                Alert.alert(
+                    'Could not open My Dog’s World',
+                    'Please try again from My Walks.'
+                );
+                return;
+            }
+
+            try {
+                const action = navigation.navigate(
+                    'PageScreen',
+                    {
+                        url: MY_DOGS_WORLD_URL,
+                        title: 'My Dog’s World',
+                    }
+                );
+
+                // BuddyBoss navigation services may return an action that
+                // needs dispatching; React Navigation returns void.
+                if (
+                    action?.type &&
+                    typeof navigation.dispatch === 'function'
+                ) {
+                    navigation.dispatch(action);
+                }
+            } catch (error) {
+                Alert.alert(
+                    'Could not open My Dog’s World',
+                    'Please try again from My Walks.'
+                );
+            }
+        },
+        [screenNavigation]
+    );
+
+    return (
+        <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open My Dog’s World"
+            accessibilityHint="See your dog's walks and photos"
+            activeOpacity={0.85}
+            onPress={openWorld}
+            style={styles.worldHomeCard}
+        >
+            <View style={styles.worldHomeTitleRow}>
+                <Text style={styles.worldHomeIcon}>🐾</Text>
+                <Text style={styles.worldHomeTitle}>
+                    My Dog’s World
+                </Text>
+                <Text style={styles.worldHomeArrow}>›</Text>
+            </View>
+            <Text style={styles.worldHomeBody}>
+                Every walk adds to their story. See their routes and photos together on one map.
+            </Text>
+            <Text style={styles.worldHomeAction}>
+                Explore their world  →
+            </Text>
+        </TouchableOpacity>
+    );
+};
+
 const firstUseChoices = [
+    {
+        title: 'My Dog’s World',
+        description: 'See your dog’s walks and photos on one map.',
+        icon: '🐾',
+        url: MY_DOGS_WORLD_URL,
+    },
     {
         title: 'Track a Walk',
         description: 'Map a walk with your dog.',
@@ -5252,6 +5336,56 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
 
+    worldHomeCard: {
+        backgroundColor: '#261e8c',
+        borderRadius: 18,
+        marginHorizontal: 14,
+        marginTop: 4,
+        marginBottom: 12,
+        paddingHorizontal: 18,
+        paddingVertical: 14,
+    },
+
+    worldHomeTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+
+    worldHomeIcon: {
+        fontSize: 22,
+        marginRight: 10,
+    },
+
+    worldHomeTitle: {
+        color: '#ffffff',
+        flex: 1,
+        fontSize: 21,
+        lineHeight: 28,
+        fontWeight: '700',
+    },
+
+    worldHomeArrow: {
+        color: '#ffffff',
+        fontSize: 28,
+        lineHeight: 29,
+        marginLeft: 8,
+    },
+
+    worldHomeBody: {
+        color: '#eee9ff',
+        fontSize: 14,
+        lineHeight: 20,
+    },
+
+    worldHomeAction: {
+        color: '#ffffff',
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: '700',
+        marginTop: 8,
+    },
+
     nearbyActivityContainer: {
         backgroundColor:
             '#ffffff',
@@ -5592,6 +5726,10 @@ export const applyCustomCode = (
                                 navigation={activityProps?.navigation}
                             />
 
+                            <MyDogsWorldHomeCard
+                                navigation={activityProps?.navigation}
+                            />
+
                             <NearbyActivityRadiusFilter
                                 {...activityProps}
                             />
@@ -5695,13 +5833,13 @@ export const applyCustomCode = (
 
                     /*
                      BuddyBoss's own example uses an absolute enlarged header when
-                     adding content around the filter row. The nearby block needs
-                     about 160-170px. Enforce a safe minimum so Android cannot
-                     collapse Search and the "Bark it out here" composer again.
+                     adding content around the filter row. The nearby block and
+                     My Dog's World card need about 330px. Enforce a safe
+                     minimum so Android cannot collapse Search and the composer.
                     */
                     return Math.max(
-                        safeDefault + 170,
-                        420
+                        safeDefault + 330,
+                        580
                     );
                 }
             );
@@ -5740,6 +5878,10 @@ export const applyCustomCode = (
                     return (
                         <View>
                             <DailyWoofLocationIntroduction
+                                navigation={activityProps?.navigation}
+                            />
+
+                            <MyDogsWorldHomeCard
                                 navigation={activityProps?.navigation}
                             />
 
