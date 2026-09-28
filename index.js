@@ -82,6 +82,15 @@ const FIRST_ACTION_STORAGE_KEY =
 const MY_DOGS_WORLD_URL =
     'https://skedoggle.com/my-dogs-world/';
 
+const selectDogDisplayName = state => {
+    const user = state?.user?.userObject;
+    const name = user?.display_name || user?.name || user?.displayName || '';
+    return String(name).replace(/<[^>]*>/g, '').trim().slice(0, 80);
+};
+
+const dogWorldTitle = dogName =>
+    dogName ? `${dogName}’s world` : 'Your dog’s world';
+
 const IS_NATIVE_MOBILE =
     Platform.OS === 'ios' ||
     Platform.OS === 'android';
@@ -2457,6 +2466,8 @@ const LocationIntroductionOnlySidecar = ({
 const MyDogsWorldHomeCard = ({
     navigation: screenNavigation,
 }) => {
+    const dogName = useSelector(selectDogDisplayName);
+    const worldTitle = dogWorldTitle(dogName);
     const openWorld = useCallback(
         () => {
             const navigation = [
@@ -2470,7 +2481,7 @@ const MyDogsWorldHomeCard = ({
 
             if (!navigation) {
                 Alert.alert(
-                    'Could not open My Dog’s World',
+                    'Could not open your dog’s world',
                     'Please try again from My Walks.'
                 );
                 return;
@@ -2481,7 +2492,7 @@ const MyDogsWorldHomeCard = ({
                     'PageScreen',
                     {
                         url: MY_DOGS_WORLD_URL,
-                        title: 'My Dog’s World',
+                        title: worldTitle,
                     }
                 );
 
@@ -2495,35 +2506,34 @@ const MyDogsWorldHomeCard = ({
                 }
             } catch (error) {
                 Alert.alert(
-                    'Could not open My Dog’s World',
+                    'Could not open your dog’s world',
                     'Please try again from My Walks.'
                 );
             }
         },
-        [screenNavigation]
+        [screenNavigation, worldTitle]
     );
 
     return (
         <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel="Open My Dog’s World"
+            accessibilityLabel={`Open ${worldTitle}`}
             accessibilityHint="See your dog's walks and photos"
             activeOpacity={0.85}
             onPress={openWorld}
             style={styles.worldHomeCard}
         >
             <View style={styles.worldHomeTitleRow}>
-                <Text style={styles.worldHomeIcon}>🐾</Text>
+                <View style={styles.worldHomeIconBadge}>
+                    <Text style={styles.worldHomeIcon}>🐾</Text>
+                </View>
                 <Text style={styles.worldHomeTitle}>
-                    My Dog’s World
+                    {worldTitle}
                 </Text>
                 <Text style={styles.worldHomeArrow}>›</Text>
             </View>
             <Text style={styles.worldHomeBody}>
                 Every walk adds to their story. See their routes and photos together on one map.
-            </Text>
-            <Text style={styles.worldHomeAction}>
-                Explore their world  →
             </Text>
         </TouchableOpacity>
     );
@@ -2531,7 +2541,7 @@ const MyDogsWorldHomeCard = ({
 
 const firstUseChoices = [
     {
-        title: 'My Dog’s World',
+        title: 'Your dog’s world',
         description: 'See your dog’s walks and photos on one map.',
         icon: '🐾',
         url: MY_DOGS_WORLD_URL,
@@ -2559,7 +2569,15 @@ const firstUseChoices = [
 const FirstUseChoiceIntroduction = ({
     saving,
     onSelect,
-}) => (
+}) => {
+    const dogName = useSelector(selectDogDisplayName);
+    const choices = firstUseChoices.map(choice =>
+        choice.url === MY_DOGS_WORLD_URL
+            ? { ...choice, title: dogWorldTitle(dogName) }
+            : choice
+    );
+
+    return (
     <SafeAreaView style={styles.introSafeArea}>
         <ScrollView
             contentContainerStyle={styles.choiceContent}
@@ -2576,7 +2594,7 @@ const FirstUseChoiceIntroduction = ({
                 What would you like to do first?
             </Text>
 
-            {firstUseChoices.map(choice => (
+            {choices.map(choice => (
                 <TouchableOpacity
                     key={choice.url}
                     accessibilityRole="button"
@@ -2622,7 +2640,8 @@ const FirstUseChoiceIntroduction = ({
             </Text>
         </ScrollView>
     </SafeAreaView>
-);
+    );
+};
 
 const DailyWoofLocationIntroduction = ({
     navigation: screenNavigation,
@@ -5337,7 +5356,7 @@ const styles = StyleSheet.create({
     },
 
     worldHomeCard: {
-        backgroundColor: '#261e8c',
+        backgroundColor: '#6748ae',
         borderRadius: 18,
         marginHorizontal: 14,
         marginTop: 4,
@@ -5352,9 +5371,18 @@ const styles = StyleSheet.create({
         marginBottom: 4,
     },
 
-    worldHomeIcon: {
-        fontSize: 22,
+    worldHomeIconBadge: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8e7f4',
         marginRight: 10,
+    },
+
+    worldHomeIcon: {
+        fontSize: 20,
     },
 
     worldHomeTitle: {
@@ -5376,14 +5404,6 @@ const styles = StyleSheet.create({
         color: '#eee9ff',
         fontSize: 14,
         lineHeight: 20,
-    },
-
-    worldHomeAction: {
-        color: '#ffffff',
-        fontSize: 14,
-        lineHeight: 20,
-        fontWeight: '700',
-        marginTop: 8,
     },
 
     nearbyActivityContainer: {
