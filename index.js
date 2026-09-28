@@ -2532,9 +2532,6 @@ const MyDogsWorldHomeCard = ({
                 </Text>
                 <Text style={styles.worldHomeArrow}>›</Text>
             </View>
-            <Text style={styles.worldHomeBody}>
-                Every walk adds to their story. See their routes and photos together on one map.
-            </Text>
         </TouchableOpacity>
     );
 };
@@ -5368,7 +5365,6 @@ const styles = StyleSheet.create({
     worldHomeTitleRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 4,
     },
 
     worldHomeIconBadge: {
@@ -5398,12 +5394,6 @@ const styles = StyleSheet.create({
         fontSize: 28,
         lineHeight: 29,
         marginLeft: 8,
-    },
-
-    worldHomeBody: {
-        color: '#eee9ff',
-        fontSize: 14,
-        lineHeight: 20,
     },
 
     nearbyActivityContainer: {
