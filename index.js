@@ -82,10 +82,88 @@ const FIRST_ACTION_STORAGE_KEY =
 const MY_DOGS_WORLD_URL =
     'https://skedoggle.com/my-dogs-world/';
 
+const MEMBER_URL =
+    'https://skedoggle.com/wp-json/buddypress/v1/members/';
+
+const dogProfileLookups = new Map();
+
 const selectDogDisplayName = state => {
     const user = state?.user?.userObject;
     const name = user?.display_name || user?.name || user?.displayName || '';
     return String(name).replace(/<[^>]*>/g, '').trim().slice(0, 80);
+};
+
+const hasDogProfileType = value => {
+    if (Array.isArray(value)) {
+        return value.some(hasDogProfileType);
+    }
+    if (value && typeof value === 'object') {
+        return ['slug', 'name', 'label'].some(key =>
+            hasDogProfileType(value[key])
+        );
+    }
+    return typeof value === 'string' &&
+        value.split(',').some(type => type.trim().toLowerCase() === 'dog');
+};
+
+const selectDogProfileStatus = state => {
+    const user = state?.user?.userObject;
+    if (!user) return null;
+
+    const memberTypes = [
+        user.member_types,
+        user.memberTypes,
+        user.member_type,
+        user.memberType,
+    ];
+
+    return memberTypes.every(value => value == null)
+        ? null
+        : memberTypes.some(hasDogProfileType);
+};
+
+const selectMemberId = state =>
+    Number(state?.user?.userObject?.id || 0);
+
+const fetchIsDogProfile = memberId => {
+    if (!dogProfileLookups.has(memberId)) {
+        const lookup = fetch(`${MEMBER_URL}${memberId}`, {
+            headers: { Accept: 'application/json' },
+        })
+            .then(response => {
+                if (!response.ok) throw new Error('Member lookup failed');
+                return response.json();
+            })
+            .then(member =>
+                Number(member?.id) === memberId &&
+                hasDogProfileType(member?.member_types)
+            )
+            .catch(() => {
+                dogProfileLookups.delete(memberId);
+                return false;
+            });
+        dogProfileLookups.set(memberId, lookup);
+    }
+    return dogProfileLookups.get(memberId);
+};
+
+const useIsDogProfile = () => {
+    const localStatus = useSelector(selectDogProfileStatus);
+    const memberId = useSelector(selectMemberId);
+    const [lookup, setLookup] = useState({ memberId: 0, isDog: false });
+
+    useEffect(() => {
+        if (localStatus !== null || !memberId) return;
+        let active = true;
+        fetchIsDogProfile(memberId).then(isDog => {
+            if (active) setLookup({ memberId, isDog });
+        });
+        return () => { active = false; };
+    }, [localStatus, memberId]);
+
+    return localStatus === null
+        ? lookup.memberId === memberId && lookup.isDog
+        : localStatus;
 };
 
 const dogWorldTitle = dogName =>
@@ -2467,6 +2545,7 @@ const MyDogsWorldHomeCard = ({
     navigation: screenNavigation,
 }) => {
     const dogName = useSelector(selectDogDisplayName);
+    const isDogProfile = useIsDogProfile();
     const worldTitle = dogWorldTitle(dogName);
     const openWorld = useCallback(
         () => {
@@ -2514,11 +2593,13 @@ const MyDogsWorldHomeCard = ({
         [screenNavigation, worldTitle]
     );
 
+    if (!isDogProfile) return null;
+
     return (
         <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel={`Open ${worldTitle}`}
-            accessibilityHint="See your dog's walks and photos"
+            accessibilityHint="See your dog's tracked walks, fitness and care"
             activeOpacity={0.85}
             onPress={openWorld}
             style={styles.worldHomeCard}
@@ -2539,7 +2620,7 @@ const MyDogsWorldHomeCard = ({
 const firstUseChoices = [
     {
         title: 'Your dog’s world',
-        description: 'See your dog’s walks and photos on one map.',
+        description: 'See your dog’s tracked walks, fitness and care.',
         icon: '🐾',
         url: MY_DOGS_WORLD_URL,
     },
@@ -2568,11 +2649,14 @@ const FirstUseChoiceIntroduction = ({
     onSelect,
 }) => {
     const dogName = useSelector(selectDogDisplayName);
-    const choices = firstUseChoices.map(choice =>
-        choice.url === MY_DOGS_WORLD_URL
-            ? { ...choice, title: dogWorldTitle(dogName) }
-            : choice
-    );
+    const isDogProfile = useIsDogProfile();
+    const choices = firstUseChoices
+        .filter(choice => choice.url !== MY_DOGS_WORLD_URL || isDogProfile)
+        .map(choice =>
+            choice.url === MY_DOGS_WORLD_URL
+                ? { ...choice, title: dogWorldTitle(dogName) }
+                : choice
+        );
 
     return (
     <SafeAreaView style={styles.introSafeArea}>
