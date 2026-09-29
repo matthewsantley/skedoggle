@@ -82,10 +82,15 @@ const FIRST_ACTION_STORAGE_KEY =
 const MY_DOGS_WORLD_URL =
     'https://skedoggle.com/my-dogs-world/';
 
-const MEMBER_URL =
-    'https://skedoggle.com/wp-json/buddypress/v1/members/';
+const dogProfileUrls = memberId => [
+    `https://skedoggle.com/wp-json/skedoggle-world/v1/dog-profile/${memberId}`,
+    `https://skedoggle.com/wp-admin/admin-ajax.php?action=sdw_dog_profile&id=${memberId}`,
+    `https://skedoggle.com/wp-json/buddyboss/v1/members/${memberId}`,
+    `https://skedoggle.com/wp-json/buddypress/v1/members/${memberId}`,
+];
 
 const dogProfileLookups = new Map();
+let activeDogProfile = false;
 
 const selectDogDisplayName = state => {
     const user = state?.user?.userObject;
@@ -115,33 +120,52 @@ const selectDogProfileStatus = state => {
         user.memberTypes,
         user.member_type,
         user.memberType,
+        user.types,
+        user.profile_type,
+        user.profileType,
     ];
 
-    return memberTypes.every(value => value == null)
-        ? null
-        : memberTypes.some(hasDogProfileType);
+    // An empty local array is often just a partial BuddyBoss user record.
+    // It must not veto the authoritative profile type lookup.
+    return memberTypes.some(hasDogProfileType) ? true : null;
 };
 
 const selectMemberId = state =>
-    Number(state?.user?.userObject?.id || 0);
+    Number(
+        state?.user?.userObject?.id ||
+        state?.user?.userObject?.user_id ||
+        0
+    );
 
 const fetchIsDogProfile = memberId => {
     if (!dogProfileLookups.has(memberId)) {
-        const lookup = fetch(`${MEMBER_URL}${memberId}`, {
-            headers: { Accept: 'application/json' },
-        })
-            .then(response => {
-                if (!response.ok) throw new Error('Member lookup failed');
-                return response.json();
-            })
-            .then(member =>
-                Number(member?.id) === memberId &&
-                hasDogProfileType(member?.member_types)
-            )
-            .catch(() => {
+        const lookup = (async () => {
+            for (const url of dogProfileUrls(memberId)) {
+                try {
+                    const response = await fetch(url, {
+                        headers: { Accept: 'application/json' },
+                        credentials: 'include',
+                    });
+                    if (!response.ok) continue;
+                    const member = await response.json();
+                    if (Number(member?.id) !== memberId) continue;
+                    if (typeof member?.is_dog === 'boolean') {
+                        return member.is_dog;
+                    }
+                    const types = member?.member_types ??
+                        member?.types ?? member?.member_type;
+                    if (types != null) return hasDogProfileType(types);
+                } catch (error) {
+                    // Older installs can still answer through another route.
+                }
+            }
+            return null;
+        })().then(isDog => {
+            if (isDog === null) {
                 dogProfileLookups.delete(memberId);
-                return false;
-            });
+            }
+            return isDog;
+        });
         dogProfileLookups.set(memberId, lookup);
     }
     return dogProfileLookups.get(memberId);
@@ -150,20 +174,21 @@ const fetchIsDogProfile = memberId => {
 const useIsDogProfile = () => {
     const localStatus = useSelector(selectDogProfileStatus);
     const memberId = useSelector(selectMemberId);
-    const [lookup, setLookup] = useState({ memberId: 0, isDog: false });
+    const [lookup, setLookup] = useState({ memberId: 0, isDog: null });
 
     useEffect(() => {
-        if (localStatus !== null || !memberId) return;
+        if (!memberId) return;
         let active = true;
         fetchIsDogProfile(memberId).then(isDog => {
             if (active) setLookup({ memberId, isDog });
         });
         return () => { active = false; };
-    }, [localStatus, memberId]);
+    }, [memberId]);
 
-    return localStatus === null
-        ? lookup.memberId === memberId && lookup.isDog
-        : localStatus;
+    if (!memberId) return false;
+    return lookup.memberId === memberId && lookup.isDog !== null
+        ? lookup.isDog
+        : localStatus === true;
 };
 
 const dogWorldTitle = dogName =>
@@ -5184,6 +5209,9 @@ const withSearchPartyCommandHost = AppNavigator => props => {
     const signedInSearchUserId = useSelector(
         state => Number(state?.user?.userObject?.id || 0)
     );
+    // This wrapper re-renders when the signed-in member or their type changes.
+    // BuddyBoss's Android header-height callback cannot itself use React hooks.
+    activeDogProfile = useIsDogProfile();
 
     return (
         <SearchPartyNativeSidecar
@@ -5925,16 +5953,10 @@ export const applyCustomCode = (
                             ? numericDefault
                             : 250;
 
-                    /*
-                     BuddyBoss's own example uses an absolute enlarged header when
-                     adding content around the filter row. The nearby block and
-                     My Dog's World card need about 330px. Enforce a safe
-                     minimum so Android cannot collapse Search and the composer.
-                    */
-                    return Math.max(
-                        safeDefault + 330,
-                        580
-                    );
+                    /* Keep the proven compact header for non-Dog accounts. */
+                    return activeDogProfile
+                        ? Math.max(safeDefault + 330, 580)
+                        : Math.max(safeDefault + 170, 420);
                 }
             );
     }
