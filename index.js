@@ -743,6 +743,12 @@ const NearbyActivityRadiusFilter =
                 <View
                     style={
                         styles
+                            .nearbyActivityPanel
+                    }
+                >
+                <View
+                    style={
+                        styles
                             .nearbyActivityHeadingRow
                     }
                 >
@@ -768,24 +774,8 @@ const NearbyActivityRadiusFilter =
                                 .nearbyActivityHeading
                         }
                     >
-                        Show posts from members near you
+                        Posts from
                     </Text>
-
-                    <View
-                        style={
-                            styles
-                                .nearbyActivityHeadingPawCircle
-                        }
-                    >
-                        <Text
-                            style={
-                                styles
-                                    .nearbyActivityHeadingPaw
-                            }
-                        >
-                            🐾
-                        </Text>
-                    </View>
                 </View>
 
                 <Text
@@ -794,7 +784,7 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityNote
                     }
                 >
-                    {'Based on your saved '}
+                    {'Nearby distances use your saved '}
                     <Text
                         accessibilityRole="link"
                         onPress={
@@ -879,16 +869,10 @@ const NearbyActivityRadiusFilter =
                         }
                     )}
                 </ScrollView>
+                </View>
 
                 <MyDogsWorldHomeCard
                     navigation={props?.navigation}
-                />
-
-                <View
-                    style={
-                        styles
-                            .nearbyActivityFeedDivider
-                    }
                 />
             </View>
         );
@@ -5556,32 +5540,51 @@ const styles = StyleSheet.create({
             10,
     },
 
+    nearbyActivityPanel: {
+        backgroundColor:
+            '#f8f5fc',
+        borderColor:
+            '#eee8f7',
+        borderWidth:
+            1,
+        borderRadius:
+            16,
+        marginHorizontal:
+            14,
+        paddingTop:
+            12,
+        paddingBottom:
+            12,
+    },
+
     nearbyActivityHeadingRow: {
         flexDirection:
             'row',
         alignItems:
             'center',
         justifyContent:
-            'center',
+            'flex-start',
         paddingHorizontal:
             14,
         marginBottom:
-            9,
+            4,
     },
 
     nearbyActivityHeadingPawCircle: {
         width:
-            30,
+            26,
         height:
-            30,
+            26,
         borderRadius:
-            15,
+            13,
         alignItems:
             'center',
         justifyContent:
             'center',
         backgroundColor:
             '#f8e7f4',
+        marginRight:
+            8,
     },
 
     nearbyActivityHeadingPaw: {
@@ -5597,18 +5600,16 @@ const styles = StyleSheet.create({
         fontWeight:
             '700',
         textAlign:
-            'center',
-        paddingHorizontal:
-            10,
+            'left',
         flexShrink:
             1,
     },
 
     nearbyActivityOptions: {
         paddingHorizontal:
-            12,
+            9,
         paddingBottom:
-            4,
+            0,
     },
 
     nearbyActivityOption: {
@@ -5627,9 +5628,9 @@ const styles = StyleSheet.create({
         backgroundColor:
             '#ffffff',
         paddingHorizontal:
-            16,
+            11,
         marginHorizontal:
-            4,
+            3,
     },
 
     nearbyActivityOptionSelected: {
@@ -5666,9 +5667,9 @@ const styles = StyleSheet.create({
         lineHeight:
             17,
         textAlign:
-            'center',
+            'left',
         paddingHorizontal:
-            16,
+            14,
         marginTop:
             0,
         marginBottom:
@@ -5684,18 +5685,6 @@ const styles = StyleSheet.create({
             'underline',
     },
 
-    nearbyActivityFeedDivider: {
-        height:
-            1,
-        backgroundColor:
-            '#d6d6dc',
-        marginHorizontal:
-            16,
-        marginTop:
-            12,
-        marginBottom:
-            0,
-    },
 });
 
 export const applyCustomCode = (
