@@ -64,6 +64,9 @@ let buddyBossRootNavigation = null;
 */
 let searchPartyWebViewMessageHandler = null;
 
+/* The Walk page can start/stop Core Location while the network is offline. */
+let walkWebViewMessageHandler = null;
+
 /* The command host belongs to the navigator, which outlives web pages. */
 let searchPartyNavigatorHostInstalled = false;
 
@@ -3309,11 +3312,13 @@ const WalkNativeSidecar = ({
 
                 if (
                     !command ||
-                    !commandId ||
-                    commandId ===
-                        lastCommandIdRef
-                            .current
+                    !commandId
                 ) {
+                    return;
+                }
+
+                if (commandId === lastCommandIdRef.current) {
+                    await acknowledgeCommand(commandId);
                     return;
                 }
 
@@ -3394,7 +3399,6 @@ const WalkNativeSidecar = ({
                         let result = null;
 
                         if (
-                            Platform.OS === 'ios' &&
                             resumeRequested &&
                             typeof BuddybossCustomCode
                                 ?.resumeBackgroundTracking ===
@@ -3701,6 +3705,31 @@ const WalkNativeSidecar = ({
                 walkIntroState,
             ]
         );
+
+    useEffect(
+        () => {
+            if (Platform.OS !== 'ios') return undefined;
+
+            const handler = event => {
+                const raw = event?.nativeEvent?.data;
+                let message = raw;
+                if (typeof raw === 'string') {
+                    try { message = JSON.parse(raw); }
+                    catch (error) { return; }
+                }
+                if (message?.action !== 'skedoggleWalkLocalCommand') return;
+                processCommand(message);
+            };
+
+            walkWebViewMessageHandler = handler;
+            return () => {
+                if (walkWebViewMessageHandler === handler) {
+                    walkWebViewMessageHandler = null;
+                }
+            };
+        },
+        [processCommand]
+    );
 
     useEffect(
         () => {
@@ -6047,9 +6076,10 @@ export const applyCustomCode = (
     ) {
         pageApi.setWebViewProps(
             () => ({
-                ...(hasPosterNavigationHook ? {
+                ...(Platform.OS === 'ios' ? {
                     injectedJavaScriptBeforeContentLoaded:
-                        iosPosterSameFrameBridge,
+                        (hasPosterNavigationHook ? iosPosterSameFrameBridge : '') +
+                        '\nwindow.__skWalkLocalCommandSupported = true; true;',
                 } : {}),
                 onMessage: (event) => {
                     const rawData =
@@ -6086,6 +6116,14 @@ export const applyCustomCode = (
                             message.url
                         );
 
+                        return;
+                    }
+
+                    if (message?.action === 'skedoggleWalkLocalCommand') {
+                        if (Platform.OS === 'ios' &&
+                            typeof walkWebViewMessageHandler === 'function') {
+                            walkWebViewMessageHandler(event);
+                        }
                         return;
                     }
 

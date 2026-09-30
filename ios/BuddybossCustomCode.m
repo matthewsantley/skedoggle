@@ -9,6 +9,12 @@
 static NSString *const SkedoggleBufferedLocationsKey =
     @"SkedoggleBufferedLocations";
 
+static NSString *const SkedoggleWalkActiveKey =
+    @"SkedoggleWalkNativeTrackingActiveV1";
+
+static NSString *const SkedoggleWalkStartedAtKey =
+    @"SkedoggleWalkNativeTrackingStartedAtV1";
+
 static NSString *const SkedoggleWalkLocationIntroSeenKey =
     @"SkedoggleWalkLocationIntroSeenV1";
 
@@ -517,6 +523,56 @@ RCT_REMAP_METHOD(
         [self loadBufferedLocations];
         [self setupLocationManager];
 
+        /*
+         The page may be unavailable when the user reopens Skedoggle without
+         mobile data. Reattach to an explicitly started unfinished walk on the
+         main queue; do not wait for a WordPress/WebView recovery command.
+        */
+        if ([[NSUserDefaults standardUserDefaults]
+                boolForKey:SkedoggleWalkActiveKey]) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSUserDefaults *walkDefaults =
+                    [NSUserDefaults standardUserDefaults];
+                NSDate *savedStart =
+                    [walkDefaults objectForKey:SkedoggleWalkStartedAtKey];
+                if (![savedStart isKindOfClass:[NSDate class]] ||
+                    -[savedStart timeIntervalSinceNow] > 18 * 60 * 60) {
+                    [walkDefaults setBool:NO forKey:SkedoggleWalkActiveKey];
+                    [walkDefaults removeObjectForKey:SkedoggleWalkStartedAtKey];
+                    return;
+                }
+
+                if (!self->_locationManager) {
+                    [self setupLocationManager];
+                }
+
+                CLAuthorizationStatus status =
+                    self->_locationManager.authorizationStatus;
+
+                if (status == kCLAuthorizationStatusAuthorizedAlways ||
+                    status == kCLAuthorizationStatusAuthorizedWhenInUse) {
+                    [self beginLocationTrackingWithStatus:status
+                                                  mode:@"walk"
+                                             sessionId:nil
+                                                userId:nil
+                                                 token:nil
+                                                joinId:nil
+                             preserveBufferedLocations:YES
+                                              resolver:^(__unused id result) {}];
+                    SkedoggleAppendDebugLog(
+                        @"NATIVE resumed unfinished walk on app launch"
+                    );
+                } else {
+                    [[NSUserDefaults standardUserDefaults]
+                        setBool:NO forKey:SkedoggleWalkActiveKey];
+                    [walkDefaults removeObjectForKey:SkedoggleWalkStartedAtKey];
+                    SkedoggleAppendDebugLog(
+                        @"NATIVE could not resume walk: location permission unavailable"
+                    );
+                }
+            });
+        }
+
         SkedoggleAppendDebugLog(
             @"NATIVE BuddybossCustomCode init complete"
         );
@@ -851,8 +907,26 @@ RCT_REMAP_METHOD(
         self->_searchPartyJoinId = nil;
     }
 
+    NSUserDefaults *walkDefaults = [NSUserDefaults standardUserDefaults];
+    BOOL isWalk = [self->_trackingMode isEqualToString:@"walk"];
+    NSDate *originalStart = isWalk && preserveBufferedLocations
+        ? [walkDefaults objectForKey:SkedoggleWalkStartedAtKey]
+        : nil;
+
     self->_trackingStartedAt =
-        [NSDate date];
+        [originalStart isKindOfClass:[NSDate class]]
+            ? originalStart
+            : [NSDate date];
+
+    /* Only an explicitly started walk is eligible for offline auto-resume. */
+    [walkDefaults setBool:isWalk forKey:SkedoggleWalkActiveKey];
+    if (isWalk) {
+        [walkDefaults setObject:self->_trackingStartedAt
+                        forKey:SkedoggleWalkStartedAtKey];
+    } else {
+        [walkDefaults removeObjectForKey:SkedoggleWalkStartedAtKey];
+    }
+    [walkDefaults synchronize];
 
     self->_lastGoodLocation =
         nil;
@@ -1354,6 +1428,12 @@ RCT_REMAP_METHOD(
             self->_isTracking =
                 NO;
 
+            NSUserDefaults *walkDefaults =
+                [NSUserDefaults standardUserDefaults];
+            [walkDefaults setBool:NO forKey:SkedoggleWalkActiveKey];
+            [walkDefaults removeObjectForKey:SkedoggleWalkStartedAtKey];
+            [walkDefaults synchronize];
+
             self->_lastGoodLocation =
                 nil;
 
@@ -1750,6 +1830,9 @@ RCT_REMAP_METHOD(
             self->_isTracking =
                 NO;
 
+            [[NSUserDefaults standardUserDefaults]
+                setBool:NO forKey:SkedoggleWalkActiveKey];
+
             if (pendingReject) {
                 pendingReject(
                     @"location_permission_denied",
@@ -1801,6 +1884,9 @@ RCT_REMAP_METHOD(
 
         self->_isTracking =
             NO;
+
+        [[NSUserDefaults standardUserDefaults]
+            setBool:NO forKey:SkedoggleWalkActiveKey];
 
         SkedoggleAppendDebugLog(
             @"NATIVE tracking stopped after permission denial"
@@ -2494,6 +2580,9 @@ RCT_REMAP_METHOD(
     ) {
         self->_isTracking =
             NO;
+
+        [[NSUserDefaults standardUserDefaults]
+            setBool:NO forKey:SkedoggleWalkActiveKey];
 
         RCTLogWarn(
             @"Skedoggle location access denied: %@",
