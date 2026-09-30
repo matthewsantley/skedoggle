@@ -5501,7 +5501,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#6748ae',
         borderRadius: 18,
         marginHorizontal: 14,
-        marginTop: 4,
+        marginTop: 14,
         marginBottom: 12,
         paddingHorizontal: 18,
         paddingVertical: 14,
@@ -5984,7 +5984,7 @@ export const applyCustomCode = (
 
                     /* Keep the proven compact header for non-Dog accounts. */
                     return activeDogProfile
-                        ? Math.max(safeDefault + 330, 580)
+                        ? Math.max(safeDefault + 340, 590)
                         : Math.max(safeDefault + 170, 420);
                 }
             );
