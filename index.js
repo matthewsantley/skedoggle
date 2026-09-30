@@ -880,6 +880,10 @@ const NearbyActivityRadiusFilter =
                     )}
                 </ScrollView>
 
+                <MyDogsWorldHomeCard
+                    navigation={props?.navigation}
+                />
+
                 <View
                     style={
                         styles
@@ -5877,10 +5881,6 @@ export const applyCustomCode = (
                                 navigation={activityProps?.navigation}
                             />
 
-                            <MyDogsWorldHomeCard
-                                navigation={activityProps?.navigation}
-                            />
-
                             <NearbyActivityRadiusFilter
                                 {...activityProps}
                             />
@@ -6023,10 +6023,6 @@ export const applyCustomCode = (
                     return (
                         <View>
                             <DailyWoofLocationIntroduction
-                                navigation={activityProps?.navigation}
-                            />
-
-                            <MyDogsWorldHomeCard
                                 navigation={activityProps?.navigation}
                             />
 
