@@ -774,31 +774,9 @@ const NearbyActivityRadiusFilter =
                                 .nearbyActivityHeading
                         }
                     >
-                        Posts from
+                        Show posts from
                     </Text>
                 </View>
-
-                <Text
-                    style={
-                        styles
-                            .nearbyActivityNote
-                    }
-                >
-                    {'Nearby distances use your saved '}
-                    <Text
-                        accessibilityRole="link"
-                        onPress={
-                            openPostcodeProfile
-                        }
-                        style={
-                            styles
-                                .nearbyActivityPostcodeLink
-                        }
-                    >
-                        postcode
-                    </Text>
-                    {'.'}
-                </Text>
 
                 <ScrollView
                     horizontal={true}
@@ -869,6 +847,28 @@ const NearbyActivityRadiusFilter =
                         }
                     )}
                 </ScrollView>
+
+                <Text
+                    style={
+                        styles
+                            .nearbyActivityNote
+                    }
+                >
+                    {'Nearby distances use your '}
+                    <Text
+                        accessibilityRole="link"
+                        onPress={
+                            openPostcodeProfile
+                        }
+                        style={
+                            styles
+                                .nearbyActivityPostcodeLink
+                        }
+                    >
+                        postcode
+                    </Text>
+                    {'.'}
+                </Text>
                 </View>
 
                 <MyDogsWorldHomeCard
@@ -5671,9 +5671,9 @@ const styles = StyleSheet.create({
         paddingHorizontal:
             14,
         marginTop:
-            0,
-        marginBottom:
             8,
+        marginBottom:
+            0,
     },
 
     nearbyActivityPostcodeLink: {
