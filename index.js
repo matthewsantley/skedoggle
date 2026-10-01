@@ -822,7 +822,7 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityNote
                     }
                 >
-                    {'Nearby activity is based on your '}
+                    {'Nearby activity shown based on your '}
                     <Text
                         accessibilityRole="link"
                         onPress={
@@ -835,7 +835,6 @@ const NearbyActivityRadiusFilter =
                     >
                         postcode
                     </Text>
-                    {'.'}
                 </Text>
                 </View>
 
@@ -5526,6 +5525,10 @@ const styles = StyleSheet.create({
     },
 
     nearbyActivityOptions: {
+        flexGrow:
+            1,
+        justifyContent:
+            'center',
         paddingHorizontal:
             9,
         paddingBottom:
@@ -5587,7 +5590,7 @@ const styles = StyleSheet.create({
         lineHeight:
             17,
         textAlign:
-            'left',
+            'center',
         paddingHorizontal:
             14,
         marginTop:
