@@ -746,38 +746,6 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityPanel
                     }
                 >
-                <View
-                    style={
-                        styles
-                            .nearbyActivityHeadingRow
-                    }
-                >
-                    <View
-                        style={
-                            styles
-                                .nearbyActivityHeadingPawCircle
-                        }
-                    >
-                        <Text
-                            style={
-                                styles
-                                    .nearbyActivityHeadingPaw
-                            }
-                        >
-                            🐾
-                        </Text>
-                    </View>
-
-                    <Text
-                        style={
-                            styles
-                                .nearbyActivityHeading
-                        }
-                    >
-                        Show posts from
-                    </Text>
-                </View>
-
                 <ScrollView
                     horizontal={true}
                     showsHorizontalScrollIndicator={
@@ -854,7 +822,7 @@ const NearbyActivityRadiusFilter =
                             .nearbyActivityNote
                     }
                 >
-                    {'Nearby distances use your '}
+                    {'Nearby activity is based on your '}
                     <Text
                         accessibilityRole="link"
                         onPress={
@@ -5557,54 +5525,6 @@ const styles = StyleSheet.create({
             12,
     },
 
-    nearbyActivityHeadingRow: {
-        flexDirection:
-            'row',
-        alignItems:
-            'center',
-        justifyContent:
-            'flex-start',
-        paddingHorizontal:
-            14,
-        marginBottom:
-            4,
-    },
-
-    nearbyActivityHeadingPawCircle: {
-        width:
-            26,
-        height:
-            26,
-        borderRadius:
-            13,
-        alignItems:
-            'center',
-        justifyContent:
-            'center',
-        backgroundColor:
-            '#f8e7f4',
-        marginRight:
-            8,
-    },
-
-    nearbyActivityHeadingPaw: {
-        fontSize:
-            15,
-    },
-
-    nearbyActivityHeading: {
-        color:
-            '#261e8c',
-        fontSize:
-            15,
-        fontWeight:
-            '700',
-        textAlign:
-            'left',
-        flexShrink:
-            1,
-    },
-
     nearbyActivityOptions: {
         paddingHorizontal:
             9,
@@ -5973,8 +5893,8 @@ export const applyCustomCode = (
 
                     /* Keep the proven compact header for non-Dog accounts. */
                     return activeDogProfile
-                        ? Math.max(safeDefault + 340, 590)
-                        : Math.max(safeDefault + 170, 420);
+                        ? Math.max(safeDefault + 310, 560)
+                        : Math.max(safeDefault + 140, 390);
                 }
             );
     }
