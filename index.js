@@ -5891,10 +5891,16 @@ export const applyCustomCode = (
                             ? numericDefault
                             : 250;
 
-                    /* Keep the proven compact header for non-Dog accounts. */
+                    /*
+                     The Android header needs room for the native search and
+                     composer. A Dog profile also renders a World card below
+                     the radius panel, but 560 left a large gap above Search
+                     on a normal Dog login. Keep the compact non-Dog height
+                     and reserve only the extra space the World card needs.
+                    */
                     return activeDogProfile
-                        ? Math.max(safeDefault + 310, 560)
-                        : Math.max(safeDefault + 140, 390);
+                        ? Math.max(safeDefault + 250, 500)
+                        : Math.max(safeDefault + 170, 420);
                 }
             );
     }
