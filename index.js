@@ -3042,7 +3042,8 @@ const WalkNativeSidecar = ({
     const uploadPoints =
         useCallback(
             async (
-                rawPoints
+                rawPoints,
+                acknowledgeAfterStop = false
             ) => {
                 if (
                     uploadRunningRef.current ||
@@ -3141,11 +3142,12 @@ const WalkNativeSidecar = ({
                     });
 
                     /*
-                     During an active walk the native buffer is the crash-proof
-                     copy of the route. Uploading to the bridge is useful, but do
-                     NOT delete the native copy until a deliberate stop command.
+                     trackingRef starts false on every app launch, including a
+                     recovery. Keep the native safety copy throughout the walk;
+                     an upload while reopening must not clear it. Only an
+                     explicit stop may acknowledge these locations.
                     */
-                    if (!trackingRef.current) {
+                    if (acknowledgeAfterStop) {
                         await acknowledgePoints(
                             points
                         );
@@ -3166,7 +3168,7 @@ const WalkNativeSidecar = ({
 
     const flushBufferedPoints =
         useCallback(
-            async () => {
+            async (acknowledgeAfterStop = false) => {
                 if (
                     flushRunningRef.current ||
                     typeof BuddybossCustomCode
@@ -3191,7 +3193,8 @@ const WalkNativeSidecar = ({
                         buffered.length > 0
                     ) {
                         await uploadPoints(
-                            buffered
+                            buffered,
+                            acknowledgeAfterStop
                         );
                     }
                 } catch (error) {
@@ -3577,16 +3580,6 @@ const WalkNativeSidecar = ({
                         command ===
                         'stop'
                     ) {
-                        /*
-                         A deliberate Finish/Stop is the only point at which the
-                         walk's persistent native safety buffer may be acknowledged
-                         and removed.
-                        */
-                        trackingRef.current =
-                            false;
-
-                        await flushBufferedPoints();
-
                         if (
                             typeof BuddybossCustomCode
                                 ?.stopBackgroundTracking ===
@@ -3596,7 +3589,14 @@ const WalkNativeSidecar = ({
                                 .stopBackgroundTracking();
                         }
 
-                        await flushBufferedPoints();
+                        trackingRef.current =
+                            false;
+
+                        /*
+                         Now the member has deliberately ended the walk, the
+                         successful upload can release its native safety copy.
+                        */
+                        await flushBufferedPoints(true);
                     }
                 } catch (error) {
                     const errorCode =
