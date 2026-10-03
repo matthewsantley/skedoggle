@@ -1608,34 +1608,21 @@ const isPrintableLostDogPosterUrl = (url) => {
     );
 };
 
-/*
- A target="_blank" tap takes the WebView's new-window path, bypassing its
- navigation-request hook. Change only the target to _self before WebKit handles
- the tap. No click is cancelled and the original URL is never rewritten.
-*/
-const iosPosterSameFrameBridge = String.raw`
-(function () {
-    if (window.__skedogglePosterSameFrameInstalled) return;
-    window.__skedogglePosterSameFrameInstalled = true;
-
-    document.addEventListener('click', function (event) {
-        var target = event.target;
-        var link = target && target.closest ? target.closest('a[href]') : null;
-        if (!link) return;
-
-        var url = link.href;
-        if (/^https:\/\/(?:www\.)?skedoggle\.com\/lost-public\/?\?/i.test(url) &&
-            /[?&](?:ld|fs)_poster_post_id=\d+(?:[&#]|$)/i.test(url)) {
-            link.target = '_self';
-        }
-    }, true);
-})();
-true;
-`;
-
+let lastIosPosterOpen = null;
 const openSkedoggleExternalUrl = (url) => {
     if (!isSafeExternalHttpUrl(url)) {
         return;
+    }
+
+    /* A WebView version can report the same new-window tap through both
+       onOpenWindow and the request hook. Open Safari only once. */
+    if (Platform.OS === 'ios' && isPrintableLostDogPosterUrl(url)) {
+        const now = Date.now();
+        if (lastIosPosterOpen?.url === url &&
+            now - lastIosPosterOpen.at < 1000) {
+            return;
+        }
+        lastIosPosterOpen = {url, at: now};
     }
 
     if (
@@ -5991,9 +5978,25 @@ export const applyCustomCode = (
         pageApi.setWebViewProps(
             () => ({
                 ...(Platform.OS === 'ios' ? {
+                    /* Keep the Poster anchor's original target="_blank".
+                       WebKit's new-window event opens Safari without loading
+                       or stacking a blank PageScreen behind it. */
+                    onOpenWindow: (event) => {
+                        const url = event?.nativeEvent?.targetUrl;
+                        if (isPrintableLostDogPosterUrl(url)) {
+                            openSkedoggleExternalUrl(url);
+                            return;
+                        }
+                        /* Preserve other new-window links by opening their
+                           destination through iOS instead of dropping them. */
+                        if (url) {
+                            Linking.openURL(url).catch(error => {
+                                console.warn('Could not open new window', error);
+                            });
+                        }
+                    },
                     injectedJavaScriptBeforeContentLoaded:
-                        (hasPosterNavigationHook ? iosPosterSameFrameBridge : '') +
-                        '\nwindow.__skWalkLocalCommandSupported = true; true;',
+                        'window.__skWalkLocalCommandSupported = true; true;',
                 } : {}),
                 onMessage: (event) => {
                     const rawData =
