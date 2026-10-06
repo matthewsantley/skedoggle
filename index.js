@@ -32,6 +32,11 @@ import {
 import {
     activitiesRequested,
 } from '@src/actions/activities';
+import PlaceholderGradient from '@src/components/PlaceholderGradient';
+import {
+    Placeholder,
+    PlaceholderContainer,
+} from '@src/components/Placeholder';
 
 const {
     BuddybossCustomCode,
@@ -5951,6 +5956,54 @@ export const applyCustomCode = (
             'function'
     ) {
         return;
+    }
+
+    if (
+        Platform.OS === 'ios' &&
+        typeof pageApi.setPageScreenTitle === 'function'
+    ) {
+        pageApi.setPageScreenTitle(
+            ({title, titlePromise, colors, styles}) => {
+                /*
+                 During walk recovery, BuddyBoss can treat the WebView's
+                 internal GPS command as a PageScreen title. Keep the native
+                 command channel intact so a walk can resume without mobile
+                 data, but never present its JSON in the navigation header.
+                 Preserve BuddyBoss's standard title placeholder elsewhere.
+                */
+                const safeTitle =
+                    typeof title === 'string' &&
+                    /^\s*\{\s*"action"\s*:\s*"(?:skedoggleWalk|startTracking|stopTracking)/
+                        .test(title)
+                        ? 'Track a Walk'
+                        : title;
+
+                return (
+                    <PlaceholderContainer
+                        animatedComponent={
+                            <PlaceholderGradient
+                                base={colors.headingsColor}
+                                style={styles.placeholderContainer}
+                            />
+                        }
+                        duration={1000}
+                        delay={500}
+                        loader={titlePromise}
+                        replace={true}
+                    >
+                        <Placeholder style={styles.placeholder}>
+                            <Text
+                                ellipsizeMode="tail"
+                                numberOfLines={1}
+                                style={styles.text}
+                            >
+                                {safeTitle}
+                            </Text>
+                        </Placeholder>
+                    </PlaceholderContainer>
+                );
+            }
+        );
     }
 
     const hasPosterNavigationHook =
