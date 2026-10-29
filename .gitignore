@@ -1,0 +1,5 @@
+
+# WordPress source lives in private skedoggle-wordpress repo
+wordpress/
+
+.DS_Store
